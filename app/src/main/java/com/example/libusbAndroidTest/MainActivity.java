@@ -31,7 +31,9 @@ import com.example.libusbAndroidTest.databinding.ActivityMainBinding;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -57,6 +59,13 @@ public class MainActivity extends AppCompatActivity {
     private HashMap<String, UsbDevice> deviceMap = new HashMap<>();
     private List<String> deviceDisplayNames = new ArrayList<>();
 
+    // Track connected devices to prevent duplicate connections
+    private Set<String> connectedDeviceNames = new HashSet<>();
+
+    // Debounce mechanism
+    private long lastDeviceListRefresh = 0;
+    private static final long REFRESH_DEBOUNCE_MS = 500; // Wait 500ms before updating device list again
+
     private static final String APPLE_VENDOR_ID = "1452";
     private static final String APPLE_DONGLE_PRODUCT_ID = "4362";
 
@@ -73,8 +82,13 @@ public class MainActivity extends AppCompatActivity {
 
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         if (device != null) {
-                            // Refresh device list
-                            refreshDeviceList();
+                            Log.d(TAG, "Permission granted for device: " + device.getDeviceName());
+                            // Debounce the refresh - only refresh if enough time has passed
+                            long currentTime = System.currentTimeMillis();
+                            if (currentTime - lastDeviceListRefresh > REFRESH_DEBOUNCE_MS) {
+                                refreshDeviceList();
+                                lastDeviceListRefresh = currentTime;
+                            }
                         }
                     } else {
                         Log.d(TAG, "permission denied for device " + device);
@@ -101,34 +115,55 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void refreshDeviceList() {
-        deviceMap.clear();
-        deviceDisplayNames.clear();
+        // Build new device list
+        HashMap<String, UsbDevice> newDeviceMap = new HashMap<>();
+        List<String> newDeviceDisplayNames = new ArrayList<>();
+        boolean listChanged = false;
 
         PendingIntent permissionIntent = PendingIntent.getBroadcast(this, 0,
-                new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE);
+                new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
 
         for (UsbDevice device : deviceList.values()) {
             String displayName = getDeviceDisplayName(device);
-            deviceMap.put(displayName, device);
-            deviceDisplayNames.add(displayName);
+            newDeviceMap.put(displayName, device);
+            newDeviceDisplayNames.add(displayName);
+
+            // Check if this is a new device
+            if (!deviceMap.containsKey(displayName)) {
+                listChanged = true;
+            }
 
             if (!usbManager.hasPermission(device)) {
+                Log.d(TAG, "Requesting permission for: " + displayName);
                 usbManager.requestPermission(device, permissionIntent);
             }
         }
 
-        // Update spinner
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, deviceDisplayNames);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        deviceSpinner.setAdapter(adapter);
+        // Check if any devices were removed
+        if (!listChanged && newDeviceMap.size() != deviceMap.size()) {
+            listChanged = true;
+        }
 
-        if (deviceDisplayNames.size() > 0) {
-            tvDeviceName.setText("Devices found: " + deviceDisplayNames.size());
-        } else {
-            tvDeviceName.setText("No USB devices found");
+        // Only update UI if the device list actually changed
+        if (listChanged) {
+            deviceMap = newDeviceMap;
+            deviceDisplayNames = newDeviceDisplayNames;
+
+            // Update spinner only if list changed
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                    android.R.layout.simple_spinner_item, deviceDisplayNames);
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            deviceSpinner.setAdapter(adapter);
+
+            Log.d(TAG, "Device list updated. Total devices: " + deviceDisplayNames.size());
+
+            if (deviceDisplayNames.size() > 0) {
+                tvDeviceName.setText("Devices found: " + deviceDisplayNames.size());
+            } else {
+                tvDeviceName.setText("No USB devices found");
+            }
         }
     }
 
@@ -148,16 +183,28 @@ public class MainActivity extends AppCompatActivity {
                 }
                 runOnUiThread(() -> tvCurrentVolume.setText(text));
             } catch (Exception e) {
+                Log.e(TAG, "Error reading volume: " + e.getMessage());
                 runOnUiThread(() -> tvCurrentVolume.setText("Volume read error"));
             }
         }).start();
     }
 
     protected void connectDevice(UsbDevice device) {
-        Log.d("UsbDevice",
-                "device: " + device.getDeviceName() + " " + device.getVendorId() + " " + device.getProductId());
+        String deviceName = device.getDeviceName();
+
+        // Prevent duplicate connections
+        if (connectedDeviceNames.contains(deviceName)) {
+            Log.d(TAG, "Device already being connected, skipping: " + deviceName);
+            return;
+        }
+
+        connectedDeviceNames.add(deviceName);
+
+        Log.d("UsbDevice", "Connecting device: " + device.getDeviceName() + " " + device.getVendorId() + " "
+                + device.getProductId());
         Log.d("UsbDevice", "class: " + device.getDeviceClass() + " " + device.getDeviceSubclass() + " "
                 + device.getDeviceProtocol());
+
         boolean isAppleDongle = isAppleDongle(device);
         String vendorId = "0x" + Integer.toHexString(device.getVendorId()).toUpperCase();
         String productId = "0x" + Integer.toHexString(device.getProductId()).toUpperCase();
@@ -169,10 +216,20 @@ public class MainActivity extends AppCompatActivity {
             UsbInterface intf = device.getInterface(0);
             UsbEndpoint endpoint = intf.getEndpoint(0);
             UsbDeviceConnection connection = usbManager.openDevice(device);
+
+            if (connection == null) {
+                Log.e(TAG, "Failed to open device connection");
+                tvDeviceName.setText("Failed to open device");
+                connectedDeviceNames.remove(deviceName);
+                return;
+            }
+
             connection.claimInterface(intf, true);
             int fileDescriptor = connection.getFileDescriptor();
 
-            deviceName = initializeNativeDevice(fileDescriptor);
+            String initResult = initializeNativeDevice(fileDescriptor);
+            Log.d(TAG, "Native device initialized: " + initResult);
+
             deviceDescriptor = fileDescriptor;
             refreshVolumeDisplay(deviceDescriptor);
 
@@ -184,7 +241,9 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error connecting device: " + e.getMessage());
+            e.printStackTrace();
             tvDeviceName.setText("Error connecting to device");
+            connectedDeviceNames.remove(deviceName);
         }
     }
 
@@ -213,6 +272,7 @@ public class MainActivity extends AppCompatActivity {
                 String selectedDeviceName = (String) parent.getItemAtPosition(position);
                 UsbDevice selectedDevice = deviceMap.get(selectedDeviceName);
                 if (selectedDevice != null) {
+                    Log.d(TAG, "User selected device: " + selectedDeviceName);
                     connectDevice(selectedDevice);
                 }
             }
@@ -240,8 +300,19 @@ public class MainActivity extends AppCompatActivity {
 
         // Refresh device list on startup
         refreshDeviceList();
+        lastDeviceListRefresh = System.currentTimeMillis();
 
         requestRecordAudioPermission();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        try {
+            ContextCompat.unregisterReceiver(this, usbReceiver);
+        } catch (Exception e) {
+            Log.d(TAG, "Error unregistering receiver: " + e.getMessage());
+        }
     }
 
     private void requestRecordAudioPermission() {
@@ -270,12 +341,14 @@ public class MainActivity extends AppCompatActivity {
 
         if (deviceDescriptor < 0) {
             tvDeviceName.setBackgroundColor(Color.RED);
+            Toast.makeText(this, "No device selected", Toast.LENGTH_SHORT).show();
             return;
         }
 
         try {
             setDeviceVolume(deviceDescriptor);
             volInput.setBackgroundColor(Color.TRANSPARENT);
+            tvDeviceName.setBackgroundColor(Color.TRANSPARENT);
         } catch (IllegalArgumentException e) {
             volInput.setText("");
             volInput.setBackgroundColor(Color.RED);
@@ -328,7 +401,7 @@ public class MainActivity extends AppCompatActivity {
         String volume = volInput.getText().toString();
 
         if (!volume.matches("[0-9A-Fa-f]{4}")) {
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Volume must be 4 hex characters");
         }
 
         setDeviceVolume(fileDescriptor, hexStringToByteArray(volume));

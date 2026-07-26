@@ -88,7 +88,7 @@
         app:layout_constraintTop_toBottomOf="@id/mount_btn" />
 
     <TextView
-        android:id="@+id/currentVolume"
+        android:id="@+id/current_volume"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Volume: -"
@@ -97,7 +97,7 @@
         android:paddingBottom="8dp" />
 
     <Button
-        android:id="@+id/refreshVolumeButton"
+        android:id="@+id/refresh_volume_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Refresh Volume" />
