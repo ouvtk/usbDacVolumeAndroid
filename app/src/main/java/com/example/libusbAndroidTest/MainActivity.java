@@ -98,16 +98,17 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    private boolean isAudioInterface(UsbDevice device) {
+    // @Nullable
+    private UsbInterface getAudioInterface(UsbDevice device) {
         // Audio device class = 0x01, Audio subclass = 0x02
         for (int i = 0; i < device.getInterfaceCount(); i++) {
             UsbInterface intf = device.getInterface(i);
             if (intf.getInterfaceClass() == 0x01 &&
                     intf.getInterfaceSubclass() == 0x02) {
-                return true;
+                return intf;
             }
         }
-        return false;
+        return null;
     }
 
     private boolean isAppleDongle(UsbDevice device) {
@@ -123,7 +124,7 @@ public class MainActivity extends AppCompatActivity {
             return "Apple Dongle - " + device.getDeviceName();
         }
 
-        String type = isAudioInterface(device) ? "🔊 Audio" : "⚙️ Control";
+        String type = getAudioInterface(device) != null ? "🔊 Audio" : "⚙️ Control";
         return type + " Vendor: " + vendorId + " Product: " + productId + " (" + device.getDeviceName() + ")";
     }
 
@@ -215,9 +216,9 @@ public class MainActivity extends AppCompatActivity {
         try {
             // Find the audio interface, don't assume index 0
             UsbInterface audioInterface = null;
-            for (int i = 0; i < device.getInterfaceCount(); i++) {
-                if (isAudioInterface(device)) {
-                    audioInterface = intf;
+            for (int i = 0; i < device.getInterfaceCount(); i++) {   
+                audioInterface = getAudioInterface(device);
+                if (audioInterface != null) {
                     break;
                 }
             }
