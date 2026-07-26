@@ -98,6 +98,18 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    private boolean isAudioInterface(UsbDevice device) {
+        // Audio device class = 0x01, Audio subclass = 0x02
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            UsbInterface intf = device.getInterface(i);
+            if (intf.getInterfaceClass() == 0x01 &&
+                    intf.getInterfaceSubclass() == 0x02) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isAppleDongle(UsbDevice device) {
         return device.getVendorId() == Integer.parseInt(APPLE_VENDOR_ID) &&
                 device.getProductId() == Integer.parseInt(APPLE_DONGLE_PRODUCT_ID);
@@ -111,7 +123,8 @@ public class MainActivity extends AppCompatActivity {
             return "Apple Dongle - " + device.getDeviceName();
         }
 
-        return "Vendor: " + vendorId + " Product: " + productId + " (" + device.getDeviceName() + ")";
+        String type = isAudioInterface(device) ? "🔊 Audio" : "⚙️ Control";
+        return type + " Vendor: " + vendorId + " Product: " + productId + " (" + device.getDeviceName() + ")";
     }
 
     private void refreshDeviceList() {
@@ -192,31 +205,30 @@ public class MainActivity extends AppCompatActivity {
     protected void connectDevice(UsbDevice device) {
         String deviceName = device.getDeviceName();
 
-        // Prevent duplicate connections
         if (connectedDeviceNames.contains(deviceName)) {
-            Log.d(TAG, "Device already being connected, skipping: " + deviceName);
+            Log.d(TAG, "Device already connected, skipping: " + deviceName);
             return;
         }
 
         connectedDeviceNames.add(deviceName);
 
-        Log.d("UsbDevice", "Connecting device: " + device.getDeviceName() + " " + device.getVendorId() + " "
-                + device.getProductId());
-        Log.d("UsbDevice", "class: " + device.getDeviceClass() + " " + device.getDeviceSubclass() + " "
-                + device.getDeviceProtocol());
-
-        boolean isAppleDongle = isAppleDongle(device);
-        String vendorId = "0x" + Integer.toHexString(device.getVendorId()).toUpperCase();
-        String productId = "0x" + Integer.toHexString(device.getProductId()).toUpperCase();
-        String deviceVendorIdAndProductId = isAppleDongle ? "Apple Dongle Detected!"
-                : "vendorId: " + vendorId + " productId: " + productId;
-        tvDeviceName.setText(deviceVendorIdAndProductId);
-
         try {
-            UsbInterface intf = device.getInterface(0);
-            UsbEndpoint endpoint = intf.getEndpoint(0);
-            UsbDeviceConnection connection = usbManager.openDevice(device);
+            // Find the audio interface, don't assume index 0
+            UsbInterface audioInterface = null;
+            for (int i = 0; i < device.getInterfaceCount(); i++) {
+                if (isAudioInterface(device)) {
+                    audioInterface = intf;
+                    break;
+                }
+            }
 
+            if (audioInterface == null) {
+                tvDeviceName.setText("Not an audio device");
+                connectedDeviceNames.remove(deviceName);
+                return;
+            }
+
+            UsbDeviceConnection connection = usbManager.openDevice(device);
             if (connection == null) {
                 Log.e(TAG, "Failed to open device connection");
                 tvDeviceName.setText("Failed to open device");
@@ -224,7 +236,7 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            connection.claimInterface(intf, true);
+            connection.claimInterface(audioInterface, true);
             int fileDescriptor = connection.getFileDescriptor();
 
             String initResult = initializeNativeDevice(fileDescriptor);
@@ -241,9 +253,8 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error connecting device: " + e.getMessage());
-            e.printStackTrace();
-            tvDeviceName.setText("Error connecting to device");
-            connectedDeviceNames.remove(deviceName);
+            tvDeviceName.setText("Error: " + e.getMessage());
+            connectedDeviceNames.remove(deviceName); // Remove on error
         }
     }
 
