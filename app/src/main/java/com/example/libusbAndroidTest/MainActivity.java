@@ -38,6 +38,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityMainBinding binding;
     private UsbManager usbManager;
 
+    private TextView tvCurrentVolume;
     private TextView tvDeviceName;
     private EditText volInput;
 
@@ -84,6 +85,31 @@ public class MainActivity extends AppCompatActivity {
         return device.getVendorId() == Integer.parseInt(APPLE_VENDOR_ID) && device.getProductId() == Integer.parseInt(APPLE_DONGLE_PRODUCT_ID);
     }
 
+    private void refreshVolumeDisplay(int fileDescriptor) {
+        // call native code off UI thread
+        new Thread(() -> {
+            try {
+                byte[] vol = getDeviceVolume(fileDescriptor); // native
+                // prepare display text
+                final String text;
+                if (vol == null || vol.length < 4) {
+                    text = "Volume: unknown";
+                } else {
+                    // interpret as little-endian 16-bit values
+                    int left = ((vol[1] & 0xFF) << 8) | (vol[0] & 0xFF);
+                    int right = ((vol[3] & 0xFF) << 8) | (vol[2] & 0xFF);
+                    String leftHex = String.format("%04X", left & 0xFFFF);
+                    String rightHex = String.format("%04X", right & 0xFFFF);
+                    text = "Left: 0x" + leftHex + " (" + left + ")  Right: 0x" + rightHex + " (" + right + ")";
+                }
+                // update UI on UI thread
+                runOnUiThread(() -> tvCurrentVolume.setText(text));
+            } catch (Exception e) {
+                runOnUiThread(() -> tvCurrentVolume.setText("Volume read error"));
+            }
+        }).start();
+    }
+
     protected void connectDevice(UsbDevice device)
     {
         Log.d("UsbDevice", "device: " + device.getDeviceName() + " " + device.getVendorId() + " " + device.getProductId());
@@ -104,6 +130,7 @@ public class MainActivity extends AppCompatActivity {
 
         deviceName = initializeNativeDevice(fileDescriptor);
         deviceDescriptor = fileDescriptor;
+        refreshVolumeDisplay(deviceDescriptor);
 
         if(autoApply.isChecked()){
             setDeviceVolume(fileDescriptor);
@@ -136,6 +163,7 @@ public class MainActivity extends AppCompatActivity {
 
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
+        tvCurrentVolume = binding.currentVolume;
         tvDeviceName = binding.deviceName;
         volInput = binding.volume;
         autoApply = binding.autoApply;
@@ -145,6 +173,14 @@ public class MainActivity extends AppCompatActivity {
         volInput.setText(settings.getString("volume", "007f"));
         autoApply.setChecked(settings.getBoolean("autoApply", false));
         quitAfterApply.setChecked(settings.getBoolean("quitAfterApply", false));
+
+        binding.refreshVolumeButton.setOnClickListener(v -> {
+            if (deviceDescriptor >= 0) {
+                refreshVolumeDisplay(deviceDescriptor);
+            } else {
+                tvCurrentVolume.setText("No device");
+            }
+        });
 
         // Initialize UsbManager
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
@@ -232,6 +268,7 @@ public class MainActivity extends AppCompatActivity {
      * which is packaged with this application.
      */
     public native String initializeNativeDevice(int fileDescriptor);
+    public native byte[] getDeviceVolume(int fileDescriptor);
     public native void setDeviceVolume(int fileDescriptor, byte[] volume);
 
     public void setDeviceVolume(int fileDescriptor){
