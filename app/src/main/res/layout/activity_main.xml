@@ -94,12 +94,18 @@
         android:text="Volume: -"
         android:textSize="14sp"
         android:paddingTop="8dp"
-        android:paddingBottom="8dp" />
+        android:paddingBottom="8dp"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/device_name" />
 
     <Button
         android:id="@+id/refresh_volume_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Refresh Volume" />
+        android:text="Refresh Volume" 
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/current_volume" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
