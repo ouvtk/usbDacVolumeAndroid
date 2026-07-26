@@ -305,16 +305,6 @@ public class MainActivity extends AppCompatActivity {
         requestRecordAudioPermission();
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        try {
-            ContextCompat.unregisterReceiver(this, usbReceiver);
-        } catch (Exception e) {
-            Log.d(TAG, "Error unregistering receiver: " + e.getMessage());
-        }
-    }
-
     private void requestRecordAudioPermission() {
         if (ContextCompat.checkSelfPermission(this,
                 android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
