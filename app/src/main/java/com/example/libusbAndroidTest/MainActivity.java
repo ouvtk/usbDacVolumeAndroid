@@ -100,6 +100,15 @@ public class MainActivity extends AppCompatActivity {
                                 refreshDeviceList();
                                 lastDeviceListRefresh = currentTime;
                             }
+                            // Connect now that permission is granted
+                            runOnUiThread(() -> {
+                                try {
+                                    connectDevice(device);
+                                } catch (Exception e) {
+                                    addDebugLog("❌ Error connecting after permission: " + e.getMessage());
+                                    Log.e(TAG, "Error connecting after permission", e);
+                                }
+                            });
                         }
                     } else {
                         addDebugLog("✗ Permission denied for device " + device);
@@ -137,7 +146,7 @@ public class MainActivity extends AppCompatActivity {
         String timestamp = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
         String logEntry = "[" + timestamp + "] " + message + "\n";
         debugLog.append(logEntry);
-        
+
         if (debugLogView != null) {
             runOnUiThread(() -> {
                 debugLogView.setText(debugLog.toString());
@@ -187,7 +196,8 @@ public class MainActivity extends AppCompatActivity {
             boolean listChanged = false;
 
             PendingIntent permissionIntent = PendingIntent.getBroadcast(this, 0,
-                    new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                    new Intent(ACTION_USB_PERMISSION),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
             HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
 
@@ -281,7 +291,7 @@ public class MainActivity extends AppCompatActivity {
 
             // Find the audio interface, don't assume index 0
             UsbInterface audioInterface = null;
-            for (int i = 0; i < device.getInterfaceCount(); i++) {   
+            for (int i = 0; i < device.getInterfaceCount(); i++) {
                 audioInterface = getAudioInterface(device);
                 if (audioInterface != null) {
                     addDebugLog("✓ Found audio interface at index " + i);
@@ -308,7 +318,7 @@ public class MainActivity extends AppCompatActivity {
             addDebugLog("✓ Device connection opened");
             connection.claimInterface(audioInterface, true);
             addDebugLog("✓ Interface claimed");
-            
+
             int fileDescriptor = connection.getFileDescriptor();
             addDebugLog("✓ File descriptor: " + fileDescriptor);
 
@@ -341,7 +351,7 @@ public class MainActivity extends AppCompatActivity {
 
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        
+
         tvCurrentVolume = binding.currentVolume;
         tvDeviceName = binding.deviceName;
         volInput = binding.volume;
@@ -368,7 +378,18 @@ public class MainActivity extends AppCompatActivity {
                     if (selectedDevice != null) {
                         addDebugLog("👆 User selected device: " + selectedDeviceName);
                         Log.d(TAG, "User selected device: " + selectedDeviceName);
-                        connectDevice(selectedDevice);
+
+                        // If we already have permission, connect immediately.
+                        if (usbManager.hasPermission(selectedDevice)) {
+                            connectDevice(selectedDevice);
+                        } else {
+                            // Request permission and wait for the ACTION_USB_PERMISSION broadcast.
+                            PendingIntent permissionIntent = PendingIntent.getBroadcast(MainActivity.this, 0,
+                                    new Intent(ACTION_USB_PERMISSION),
+                                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                            addDebugLog("→ Requesting permission (on selection) for: " + selectedDeviceName);
+                            usbManager.requestPermission(selectedDevice, permissionIntent);
+                        }
                     }
                 } catch (Exception e) {
                     addDebugLog("❌ Error selecting device: " + e.getMessage());
