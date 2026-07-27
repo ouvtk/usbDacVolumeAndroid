@@ -57,7 +57,6 @@ public class MainActivity extends AppCompatActivity {
     private CheckBox quitAfterApply;
 
     private int deviceDescriptor = -1;
-    private static String deviceName;
 
     // Store device mapping: display name -> UsbDevice
     private HashMap<String, UsbDevice> deviceMap = new HashMap<>();
@@ -70,8 +69,8 @@ public class MainActivity extends AppCompatActivity {
     private long lastDeviceListRefresh = 0;
     private static final long REFRESH_DEBOUNCE_MS = 500; // Wait 500ms before updating device list again
 
-    private static final String APPLE_VENDOR_ID = "1452";
-    private static final String APPLE_DONGLE_PRODUCT_ID = "4362";
+    private static final int APPLE_VENDOR_ID = 1452;
+    private static final int APPLE_DONGLE_PRODUCT_ID = 4362;
 
     private static final String TAG = "USB DAC Volume Adjustment";
     private static final String ACTION_USB_PERMISSION = "com.android.example.USB_PERMISSION";
@@ -102,14 +101,12 @@ public class MainActivity extends AppCompatActivity {
                                 try {
                                     connectDevice(device);
                                 } catch (Exception e) {
-                                    addDebugLog("❌ Error connecting after permission: " + e.getMessage());
-                                    Log.e(TAG, "Error connecting after permission", e);
+                                    logError("❌ Error connecting after permission: " + e.getMessage(), e);
                                 }
                             });
                         }
                     } else {
-                        addDebugLog("✗ Permission denied for device " + device);
-                        Log.d(TAG, "permission denied for device " + device);
+                        logAction("✗ Permission denied for device " + device);
                     }
                 }
             } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
@@ -154,6 +151,14 @@ public class MainActivity extends AppCompatActivity {
     private void logAction(String message) {
         addDebugLog(message);
         Log.d(TAG, message);
+    }
+
+    /**
+     * Logs an error to both debug log and Android Logcat.
+     */
+    private void logError(String message, Throwable e) {
+        addDebugLog(message);
+        Log.e(TAG, message, e);
     }
 
     /**
@@ -220,8 +225,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean isAppleDongle(UsbDevice device) {
-        return device.getVendorId() == Integer.parseInt(APPLE_VENDOR_ID) &&
-                device.getProductId() == Integer.parseInt(APPLE_DONGLE_PRODUCT_ID);
+        return device.getVendorId() == APPLE_VENDOR_ID &&
+                device.getProductId() == APPLE_DONGLE_PRODUCT_ID;
     }
 
     private String getDeviceDisplayName(UsbDevice device) {
@@ -287,8 +292,7 @@ public class MainActivity extends AppCompatActivity {
                 });
             }
         } catch (Exception e) {
-            addDebugLog("❌ Error refreshing device list: " + e.getMessage());
-            Log.e(TAG, "Error refreshing device list", e);
+            logError("❌ Error refreshing device list: " + e.getMessage(), e);
         }
     }
 
@@ -310,8 +314,7 @@ public class MainActivity extends AppCompatActivity {
                 }
                 runOnUiThread(() -> tvCurrentVolume.setText(text));
             } catch (Exception e) {
-                Log.e(TAG, "Error reading volume: " + e.getMessage());
-                addDebugLog("❌ Error reading volume: " + e.getMessage());
+                logError("❌ Error reading volume: " + e.getMessage(), e);
                 runOnUiThread(() -> tvCurrentVolume.setText("Volume read error"));
             }
         }).start();
@@ -321,8 +324,7 @@ public class MainActivity extends AppCompatActivity {
         String deviceName = device.getDeviceName();
 
         if (connectedDeviceNames.contains(deviceName)) {
-            addDebugLog("⚠ Device already connected, skipping: " + deviceName);
-            Log.d(TAG, "Device already connected, skipping: " + deviceName);
+            logAction("⚠ Device already connected, skipping: " + deviceName);
             return;
         }
 
@@ -330,14 +332,10 @@ public class MainActivity extends AppCompatActivity {
             addDebugLog("🔌 Connecting device: " + deviceName);
             connectedDeviceNames.add(deviceName);
 
-            // Find the audio interface, don't assume index 0
-            UsbInterface audioInterface = null;
-            for (int i = 0; i < device.getInterfaceCount(); i++) {
-                audioInterface = getAudioInterface(device);
-                if (audioInterface != null) {
-                    addDebugLog("✓ Found audio interface at index " + i);
-                    break;
-                }
+            // Find the audio interface
+            UsbInterface audioInterface = getAudioInterface(device);
+            if (audioInterface != null) {
+                addDebugLog("✓ Found audio interface");
             }
 
             if (audioInterface == null) {
@@ -364,8 +362,7 @@ public class MainActivity extends AppCompatActivity {
             addDebugLog("✓ File descriptor: " + fileDescriptor);
 
             String initResult = initializeNativeDevice(fileDescriptor);
-            addDebugLog("✓ Native device initialized: " + initResult);
-            Log.d(TAG, "Native device initialized: " + initResult);
+            logAction("✓ Native device initialized: " + initResult);
 
             deviceDescriptor = fileDescriptor;
             refreshVolumeDisplay(deviceDescriptor);
@@ -379,8 +376,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         } catch (Exception e) {
-            addDebugLog("❌ Error connecting device: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-            Log.e(TAG, "Error connecting device: " + e.getMessage(), e);
+            logError("❌ Error connecting device: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
             tvDeviceName.setText("Error: " + e.getMessage());
             connectedDeviceNames.remove(deviceName); // Remove on error
         }
@@ -418,8 +414,7 @@ public class MainActivity extends AppCompatActivity {
                     String selectedDeviceName = (String) parent.getItemAtPosition(position);
                     UsbDevice selectedDevice = deviceMap.get(selectedDeviceName);
                     if (selectedDevice != null) {
-                        addDebugLog("👆 User selected device: " + selectedDeviceName);
-                        Log.d(TAG, "User selected device: " + selectedDeviceName);
+                        logAction("👆 User selected device: " + selectedDeviceName);
 
                         // If we already have permission, connect immediately.
                         if (usbManager.hasPermission(selectedDevice)) {
@@ -430,8 +425,7 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 } catch (Exception e) {
-                    addDebugLog("❌ Error selecting device: " + e.getMessage());
-                    Log.e(TAG, "Error selecting device", e);
+                    logError("❌ Error selecting device: " + e.getMessage(), e);
                 }
             }
 
@@ -451,14 +445,21 @@ public class MainActivity extends AppCompatActivity {
                     tvCurrentVolume.setText("No device");
                 }
             } catch (Exception e) {
-                addDebugLog("❌ Error refreshing volume: " + e.getMessage());
-                Log.e(TAG, "Error refreshing volume", e);
+                logError("❌ Error refreshing volume: " + e.getMessage(), e);
             }
         });
 
         // Toggle debug button
-        toggleDebugViewVisibility();
         binding.toggleDebugBtn.setOnClickListener(v -> toggleDebugViewVisibility());
+
+        // Checkbox listeners (registered after setChecked to avoid firing on init)
+        autoApply.setOnClickListener(v ->
+                onCheckboxChanged(autoApply, "autoApply", "Auto-apply"));
+        quitAfterApply.setOnClickListener(v ->
+                onCheckboxChanged(quitAfterApply, "quitAfterApply", "Quit-after-apply"));
+
+        // Apply button listener
+        binding.mountBtn.setOnClickListener(v -> applyButtonPressed());
 
         // Initialize UsbManager
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
@@ -505,67 +506,47 @@ public class MainActivity extends AppCompatActivity {
             if (grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 logAction("✓ RECORD_AUDIO permission granted");
             } else {
-                addDebugLog("✗ RECORD_AUDIO permission denied");
-                Log.d(TAG, "RECORD_AUDIO permission denied");
+                logAction("✗ RECORD_AUDIO permission denied");
             }
         }
     }
 
-    public void applyButtonPressed(View view) {
+    private void applyButtonPressed() {
+        String volume = volInput.getText().toString();
+
+        if (deviceDescriptor < 0) {
+            addDebugLog("❌ No device selected");
+            tvDeviceName.setBackgroundColor(Color.RED);
+            Toast.makeText(this, "No device selected", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         try {
-            String volume = volInput.getText().toString();
-
-            if (deviceDescriptor < 0) {
-                addDebugLog("❌ No device selected");
-                tvDeviceName.setBackgroundColor(Color.RED);
-                Toast.makeText(this, "No device selected", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            try {
-                addDebugLog("→ Setting volume to: 0x" + volume);
-                setDeviceVolume(deviceDescriptor);
-                addDebugLog("✓ Volume set successfully");
-                clearErrorState();
-                savePref("volume", volume);
-            } catch (IllegalArgumentException e) {
-                addDebugLog("❌ Invalid volume format: " + e.getMessage());
-                volInput.setText("");
-                volInput.setBackgroundColor(Color.RED);
-                return;
-            } catch (Exception e) {
-                addDebugLog("❌ Error setting volume: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-                Log.e(TAG, "Error setting volume", e);
-                tvDeviceName.setBackgroundColor(Color.RED);
-                return;
-            }
+            addDebugLog("→ Setting volume to: 0x" + volume);
+            setDeviceVolume(deviceDescriptor);
+            addDebugLog("✓ Volume set successfully");
+            clearErrorState();
+            savePref("volume", volume);
+        } catch (IllegalArgumentException e) {
+            addDebugLog("❌ Invalid volume format: " + e.getMessage());
+            volInput.setText("");
+            volInput.setBackgroundColor(Color.RED);
         } catch (Exception e) {
-            addDebugLog("❌ Unexpected error in applyButtonPressed: " + e.getMessage());
-            Log.e(TAG, "Unexpected error in applyButtonPressed", e);
+            logError("❌ Error setting volume: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
+            tvDeviceName.setBackgroundColor(Color.RED);
         }
     }
 
-    public void autoApplyCheckboxPressed(View view) {
+    private void onCheckboxChanged(CheckBox checkBox, String prefKey, String label) {
         try {
-            savePref("autoApply", autoApply.isChecked());
-            addDebugLog("⚙️ Auto-apply set to: " + autoApply.isChecked());
+            savePref(prefKey, checkBox.isChecked());
+            addDebugLog("⚙️ " + label + " set to: " + checkBox.isChecked());
         } catch (Exception e) {
-            addDebugLog("❌ Error toggling auto-apply: " + e.getMessage());
-            Log.e(TAG, "Error toggling auto-apply", e);
+            logError("❌ Error toggling " + label + ": " + e.getMessage(), e);
         }
     }
 
-    public void quitAfterApplyCheckboxPressed(View view) {
-        try {
-            savePref("quitAfterApply", quitAfterApply.isChecked());
-            addDebugLog("⚙️ Quit-after-apply set to: " + quitAfterApply.isChecked());
-        } catch (Exception e) {
-            addDebugLog("❌ Error toggling quit-after-apply: " + e.getMessage());
-            Log.e(TAG, "Error toggling quit-after-apply", e);
-        }
-    }
-
-    public static byte[] hexStringToByteArray(String s) {
+    private static byte[] hexStringToByteArray(String s) {
         int len = s.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
