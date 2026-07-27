@@ -106,6 +106,29 @@ public class MainActivity extends AppCompatActivity {
                         Log.d(TAG, "permission denied for device " + device);
                     }
                 }
+            } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+                // Handle device attachment
+                UsbDevice device = (UsbDevice) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                if (device != null) {
+                    addDebugLog("🔌 USB device attached: " + device.getDeviceName());
+                    long currentTime = System.currentTimeMillis();
+                    if (currentTime - lastDeviceListRefresh > REFRESH_DEBOUNCE_MS) {
+                        refreshDeviceList();
+                        lastDeviceListRefresh = currentTime;
+                    }
+                }
+            } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+                // Handle device detachment
+                UsbDevice device = (UsbDevice) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                if (device != null) {
+                    addDebugLog("🔌 USB device detached: " + device.getDeviceName());
+                    connectedDeviceNames.remove(device.getDeviceName());
+                    long currentTime = System.currentTimeMillis();
+                    if (currentTime - lastDeviceListRefresh > REFRESH_DEBOUNCE_MS) {
+                        refreshDeviceList();
+                        lastDeviceListRefresh = currentTime;
+                    }
+                }
             }
         }
     };
@@ -196,19 +219,21 @@ public class MainActivity extends AppCompatActivity {
                 deviceDisplayNames = newDeviceDisplayNames;
 
                 // Update spinner only if list changed
-                ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                        android.R.layout.simple_spinner_item, deviceDisplayNames);
-                adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-                deviceSpinner.setAdapter(adapter);
+                runOnUiThread(() -> {
+                    ArrayAdapter<String> adapter = new ArrayAdapter<>(MainActivity.this,
+                            android.R.layout.simple_spinner_item, deviceDisplayNames);
+                    adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                    deviceSpinner.setAdapter(adapter);
 
-                addDebugLog("📋 Device list updated. Total devices: " + deviceDisplayNames.size());
-                Log.d(TAG, "Device list updated. Total devices: " + deviceDisplayNames.size());
+                    addDebugLog("📋 Device list updated. Total devices: " + deviceDisplayNames.size());
+                    Log.d(TAG, "Device list updated. Total devices: " + deviceDisplayNames.size());
 
-                if (deviceDisplayNames.size() > 0) {
-                    tvDeviceName.setText("Devices found: " + deviceDisplayNames.size());
-                } else {
-                    tvDeviceName.setText("No USB devices found");
-                }
+                    if (deviceDisplayNames.size() > 0) {
+                        tvDeviceName.setText("Devices found: " + deviceDisplayNames.size());
+                    } else {
+                        tvDeviceName.setText("No USB devices found");
+                    }
+                });
             }
         } catch (Exception e) {
             addDebugLog("❌ Error refreshing device list: " + e.getMessage());
@@ -384,9 +409,22 @@ public class MainActivity extends AppCompatActivity {
 
         // Initialize the receiver for getting the device permission
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
+        filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+        filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
         ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
+        // Refresh device list on startup
+        refreshDeviceList();
+        lastDeviceListRefresh = System.currentTimeMillis();
+
         requestRecordAudioPermission();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Refresh device list when resuming to catch any changes
+        refreshDeviceList();
     }
 
     private void requestRecordAudioPermission() {
