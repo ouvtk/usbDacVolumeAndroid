@@ -76,6 +76,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "USB DAC Volume Adjustment";
     private static final String ACTION_USB_PERMISSION = "com.android.example.USB_PERMISSION";
     private static final int RECORD_AUDIO_PERMISSION_CODE = 1;
+    private static final String PREFS_KEY = "myPrefs";
 
     // Debug logging
     private TextView debugLogView;
@@ -92,13 +93,9 @@ public class MainActivity extends AppCompatActivity {
 
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         if (device != null) {
-                            addDebugLog("✓ Permission granted for device: " + device.getDeviceName());
-                            Log.d(TAG, "Permission granted for device: " + device.getDeviceName());
-                            // Debounce the refresh - only refresh if enough time has passed
-                            long currentTime = System.currentTimeMillis();
-                            if (currentTime - lastDeviceListRefresh > REFRESH_DEBOUNCE_MS) {
+                            logAction("✓ Permission granted for device: " + device.getDeviceName());
+                            if (isDebounceExpired()) {
                                 refreshDeviceList();
-                                lastDeviceListRefresh = currentTime;
                             }
                             // Connect now that permission is granted
                             runOnUiThread(() -> {
@@ -120,10 +117,8 @@ public class MainActivity extends AppCompatActivity {
                 UsbDevice device = (UsbDevice) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
                 if (device != null) {
                     addDebugLog("🔌 USB device attached: " + device.getDeviceName());
-                    long currentTime = System.currentTimeMillis();
-                    if (currentTime - lastDeviceListRefresh > REFRESH_DEBOUNCE_MS) {
+                    if (isDebounceExpired()) {
                         refreshDeviceList();
-                        lastDeviceListRefresh = currentTime;
                     }
                 }
             } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
@@ -132,15 +127,68 @@ public class MainActivity extends AppCompatActivity {
                 if (device != null) {
                     addDebugLog("🔌 USB device detached: " + device.getDeviceName());
                     connectedDeviceNames.remove(device.getDeviceName());
-                    long currentTime = System.currentTimeMillis();
-                    if (currentTime - lastDeviceListRefresh > REFRESH_DEBOUNCE_MS) {
+                    if (isDebounceExpired()) {
                         refreshDeviceList();
-                        lastDeviceListRefresh = currentTime;
                     }
                 }
             }
         }
     };
+
+    /**
+     * Checks if enough time has passed since last device list refresh.
+     * Updates the refresh timestamp if expired.
+     */
+    private boolean isDebounceExpired() {
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastDeviceListRefresh > REFRESH_DEBOUNCE_MS) {
+            lastDeviceListRefresh = currentTime;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Logs both to debug log and to Android Logcat.
+     */
+    private void logAction(String message) {
+        addDebugLog(message);
+        Log.d(TAG, message);
+    }
+
+    /**
+     * Requests USB permission for a device.
+     */
+    private void requestDevicePermission(UsbDevice device) {
+        PendingIntent permissionIntent = PendingIntent.getBroadcast(this, 0,
+                new Intent(ACTION_USB_PERMISSION),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        String displayName = getDeviceDisplayName(device);
+        addDebugLog("→ Requesting permission for: " + displayName);
+        usbManager.requestPermission(device, permissionIntent);
+    }
+
+    /**
+     * Saves a preference value (String or Boolean).
+     */
+    private void savePref(String key, Object value) {
+        SharedPreferences settings = getApplicationContext().getSharedPreferences(PREFS_KEY, 0);
+        SharedPreferences.Editor editor = settings.edit();
+        if (value instanceof Boolean) {
+            editor.putBoolean(key, (Boolean) value);
+        } else if (value instanceof String) {
+            editor.putString(key, (String) value);
+        }
+        editor.apply();
+    }
+
+    /**
+     * Clears error state from input and device name display.
+     */
+    private void clearErrorState() {
+        volInput.setBackgroundColor(Color.TRANSPARENT);
+        tvDeviceName.setBackgroundColor(Color.TRANSPARENT);
+    }
 
     private void addDebugLog(String message) {
         String timestamp = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
@@ -195,10 +243,6 @@ public class MainActivity extends AppCompatActivity {
             List<String> newDeviceDisplayNames = new ArrayList<>();
             boolean listChanged = false;
 
-            PendingIntent permissionIntent = PendingIntent.getBroadcast(this, 0,
-                    new Intent(ACTION_USB_PERMISSION),
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
             HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
 
             for (UsbDevice device : deviceList.values()) {
@@ -212,9 +256,7 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 if (!usbManager.hasPermission(device)) {
-                    addDebugLog("→ Requesting permission for: " + displayName);
-                    Log.d(TAG, "Requesting permission for: " + displayName);
-                    usbManager.requestPermission(device, permissionIntent);
+                    requestDevicePermission(device);
                 }
             }
 
@@ -235,8 +277,7 @@ public class MainActivity extends AppCompatActivity {
                     adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
                     deviceSpinner.setAdapter(adapter);
 
-                    addDebugLog("📋 Device list updated. Total devices: " + deviceDisplayNames.size());
-                    Log.d(TAG, "Device list updated. Total devices: " + deviceDisplayNames.size());
+                    logAction("📋 Device list updated. Total devices: " + deviceDisplayNames.size());
 
                     if (deviceDisplayNames.size() > 0) {
                         tvDeviceName.setText("Devices found: " + deviceDisplayNames.size());
@@ -363,7 +404,8 @@ public class MainActivity extends AppCompatActivity {
 
         addDebugLog("🚀 Application started");
 
-        SharedPreferences settings = getApplicationContext().getSharedPreferences("myPrefs", 0);
+        // Load saved preferences
+        SharedPreferences settings = getApplicationContext().getSharedPreferences(PREFS_KEY, 0);
         volInput.setText(settings.getString("volume", "007f"));
         autoApply.setChecked(settings.getBoolean("autoApply", false));
         quitAfterApply.setChecked(settings.getBoolean("quitAfterApply", false));
@@ -384,11 +426,7 @@ public class MainActivity extends AppCompatActivity {
                             connectDevice(selectedDevice);
                         } else {
                             // Request permission and wait for the ACTION_USB_PERMISSION broadcast.
-                            PendingIntent permissionIntent = PendingIntent.getBroadcast(MainActivity.this, 0,
-                                    new Intent(ACTION_USB_PERMISSION),
-                                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-                            addDebugLog("→ Requesting permission (on selection) for: " + selectedDeviceName);
-                            usbManager.requestPermission(selectedDevice, permissionIntent);
+                            requestDevicePermission(selectedDevice);
                         }
                     }
                 } catch (Exception e) {
@@ -420,9 +458,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Toggle debug button
         toggleDebugViewVisibility();
-        binding.toggleDebugBtn.setOnClickListener(v -> {
-            toggleDebugViewVisibility();
-        });
+        binding.toggleDebugBtn.setOnClickListener(v -> toggleDebugViewVisibility());
 
         // Initialize UsbManager
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
@@ -467,8 +503,7 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == RECORD_AUDIO_PERMISSION_CODE) {
             if (grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                addDebugLog("✓ RECORD_AUDIO permission granted");
-                Log.d(TAG, "RECORD_AUDIO permission granted");
+                logAction("✓ RECORD_AUDIO permission granted");
             } else {
                 addDebugLog("✗ RECORD_AUDIO permission denied");
                 Log.d(TAG, "RECORD_AUDIO permission denied");
@@ -491,8 +526,8 @@ public class MainActivity extends AppCompatActivity {
                 addDebugLog("→ Setting volume to: 0x" + volume);
                 setDeviceVolume(deviceDescriptor);
                 addDebugLog("✓ Volume set successfully");
-                volInput.setBackgroundColor(Color.TRANSPARENT);
-                tvDeviceName.setBackgroundColor(Color.TRANSPARENT);
+                clearErrorState();
+                savePref("volume", volume);
             } catch (IllegalArgumentException e) {
                 addDebugLog("❌ Invalid volume format: " + e.getMessage());
                 volInput.setText("");
@@ -504,13 +539,6 @@ public class MainActivity extends AppCompatActivity {
                 tvDeviceName.setBackgroundColor(Color.RED);
                 return;
             }
-
-            SharedPreferences settings = getApplicationContext().getSharedPreferences("myPrefs", 0);
-            if (!settings.getString("volume", "").equals(volume)) {
-                SharedPreferences.Editor editor = settings.edit();
-                editor.putString("volume", volume);
-                editor.apply();
-            }
         } catch (Exception e) {
             addDebugLog("❌ Unexpected error in applyButtonPressed: " + e.getMessage());
             Log.e(TAG, "Unexpected error in applyButtonPressed", e);
@@ -519,10 +547,7 @@ public class MainActivity extends AppCompatActivity {
 
     public void autoApplyCheckboxPressed(View view) {
         try {
-            SharedPreferences settings = getApplicationContext().getSharedPreferences("myPrefs", 0);
-            SharedPreferences.Editor editor = settings.edit();
-            editor.putBoolean("autoApply", autoApply.isChecked());
-            editor.apply();
+            savePref("autoApply", autoApply.isChecked());
             addDebugLog("⚙️ Auto-apply set to: " + autoApply.isChecked());
         } catch (Exception e) {
             addDebugLog("❌ Error toggling auto-apply: " + e.getMessage());
@@ -532,10 +557,7 @@ public class MainActivity extends AppCompatActivity {
 
     public void quitAfterApplyCheckboxPressed(View view) {
         try {
-            SharedPreferences settings = getApplicationContext().getSharedPreferences("myPrefs", 0);
-            SharedPreferences.Editor editor = settings.edit();
-            editor.putBoolean("quitAfterApply", quitAfterApply.isChecked());
-            editor.apply();
+            savePref("quitAfterApply", quitAfterApply.isChecked());
             addDebugLog("⚙️ Quit-after-apply set to: " + quitAfterApply.isChecked());
         } catch (Exception e) {
             addDebugLog("❌ Error toggling quit-after-apply: " + e.getMessage());
