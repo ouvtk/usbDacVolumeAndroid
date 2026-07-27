@@ -386,10 +386,6 @@ public class MainActivity extends AppCompatActivity {
         IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
         ContextCompat.registerReceiver(this, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
-        // Refresh device list on startup
-        refreshDeviceList();
-        lastDeviceListRefresh = System.currentTimeMillis();
-
         requestRecordAudioPermission();
     }
 
