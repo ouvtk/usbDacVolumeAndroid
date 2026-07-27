@@ -398,10 +398,9 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Toggle debug button
+        toggleDebugViewVisibility();
         binding.toggleDebugBtn.setOnClickListener(v -> {
-            debugVisible = !debugVisible;
-            debugScrollView.setVisibility(debugVisible ? View.VISIBLE : View.GONE);
-            binding.toggleDebugBtn.setText(debugVisible ? "Hide Debug" : "Debug");
+            toggleDebugViewVisibility();
         });
 
         // Initialize UsbManager
@@ -418,6 +417,12 @@ public class MainActivity extends AppCompatActivity {
         lastDeviceListRefresh = System.currentTimeMillis();
 
         requestRecordAudioPermission();
+    }
+
+    private void toggleDebugViewVisibility() {
+        debugVisible = !debugVisible;
+        debugScrollView.setVisibility(debugVisible ? View.VISIBLE : View.GONE);
+        binding.toggleDebugBtn.setText(debugVisible ? "Hide Debug" : "Debug");
     }
 
     @Override
