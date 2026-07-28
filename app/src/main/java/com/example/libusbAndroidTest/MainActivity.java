@@ -59,15 +59,14 @@ public class MainActivity extends AppCompatActivity {
     private Button permissionBtn;
     private Button connectBtn;
 
-    private int deviceDescriptor = -1;
     private UsbDevice selectedDevice;
 
     // Store device mapping: display name -> UsbDevice
-    private HashMap<String, UsbDevice> deviceMap = new HashMap<>();
+    private HashMap<String, UsbDevice> devices = new HashMap<>();
     private List<String> deviceDisplayNames = new ArrayList<>();
 
     // Track connected devices to prevent duplicate connections
-    private Set<String> connectedDeviceNames = new HashSet<>();
+    private HashMap<String, UsbDeviceConnection> connectedDevices = new HashMap<>();
 
     // Debounce mechanism
     private long lastDeviceListRefresh = 0;
@@ -116,12 +115,14 @@ public class MainActivity extends AppCompatActivity {
                 // Handle device detachment
                 UsbDevice device = (UsbDevice) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
                 if (device != null) {
-                    addDebugLog("🔌 USB device detached: " + device.getDeviceName());
-                    connectedDeviceNames.remove(device.getDeviceName());
+                    String deviceName = device.getDeviceName();
+                    addDebugLog("🔌 USB device detached: " + deviceName);
+                    UsbDeviceConnection connection = connectedDevices.remove(deviceName);
+
+                    connectedDevices.remove(deviceName);
                     if (selectedDevice != null &&
-                            selectedDevice.getDeviceName().equals(device.getDeviceName())) {
+                            selectedDevice.getDeviceName().equals(deviceName)) {
                         selectedDevice = null;
-                        deviceDescriptor = -1;
                     }
                     if (isDebounceExpired()) {
                         refreshDeviceList();
@@ -255,19 +256,20 @@ public class MainActivity extends AppCompatActivity {
                 newDeviceDisplayNames.add(displayName);
 
                 // Check if this is a new device
-                if (!deviceMap.containsKey(displayName)) {
+                if (!devices.containsKey(displayName)) {
                     listChanged = true;
+                    break;
                 }
             }
 
             // Check if any devices were removed
-            if (!listChanged && newDeviceMap.size() != deviceMap.size()) {
+            if (newDeviceMap.size() != devices.size()) {
                 listChanged = true;
             }
 
             // Only update UI if the device list actually changed
             if (listChanged) {
-                deviceMap = newDeviceMap;
+                devices = newDeviceMap;
                 deviceDisplayNames = newDeviceDisplayNames;
 
                 // Update spinner only if list changed
@@ -291,10 +293,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void refreshVolumeDisplay(int fileDescriptor) {
+    private void refreshVolumeDisplay(UsbDeviceConnection connection) {
         new Thread(() -> {
             try {
-                byte[] vol = getDeviceVolume(fileDescriptor); // native
+                byte[] vol = getDeviceVolume(connection);
                 final String text;
                 if (vol == null || vol.length < 4) {
                     text = "Volume: unknown";
@@ -317,51 +319,45 @@ public class MainActivity extends AppCompatActivity {
 
     protected void connectDevice(UsbDevice device) {
         String deviceName = device.getDeviceName();
-
-        if (connectedDeviceNames.contains(deviceName)) {
+        if (connectedDevices.containsKey(deviceName)) {
             logAction("⚠ Device already connected, skipping: " + deviceName);
             return;
         }
 
         try {
             addDebugLog("🔌 Connecting device: " + deviceName);
-            connectedDeviceNames.add(deviceName);
-
             // Find the audio interface
             UsbInterface audioInterface = getAudioInterface(device);
             if (audioInterface == null) {
                 addDebugLog("❌ Not an audio device");
                 tvDeviceName.setText("Not an audio device");
-                connectedDeviceNames.remove(deviceName);
+                connectedDevices.remove(deviceName);
                 return;
             }
-            
+
             addDebugLog("✓ Found audio interface");
             UsbDeviceConnection connection = usbManager.openDevice(device);
             if (connection == null) {
                 addDebugLog("❌ Failed to open device connection");
                 Log.e(TAG, "Failed to open device connection");
                 tvDeviceName.setText("Failed to open device");
-                connectedDeviceNames.remove(deviceName);
                 return;
             }
 
+            connectedDevices.put(deviceName, connection);
             addDebugLog("✓ Device connection opened");
-            connection.claimInterface(audioInterface, true);
-            addDebugLog("✓ Interface claimed");
+            boolean isClaimed = connection.claimInterface(audioInterface, true);
+            addDebugLog("✓ Interface claimed: " + isClaimed);
 
             int fileDescriptor = connection.getFileDescriptor();
             addDebugLog("✓ File descriptor: " + fileDescriptor);
 
-            String initResult = initializeNativeDevice(fileDescriptor);
-            logAction("✓ Native device initialized: " + initResult);
-
-            deviceDescriptor = fileDescriptor;
-            refreshVolumeDisplay(deviceDescriptor);
+            // deviceDescriptor = fileDescriptor;
+            // refreshVolumeDisplay(deviceDescriptor);
 
             if (autoApply.isChecked()) {
                 addDebugLog("→ Auto-apply enabled, setting volume...");
-                setDeviceVolume(fileDescriptor);
+                setDeviceVolume(connection);
                 if (quitAfterApply.isChecked()) {
                     addDebugLog("→ Quit after apply enabled, closing app...");
                     finishAndRemoveTask();
@@ -370,7 +366,7 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             logError("❌ Error connecting device: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
             tvDeviceName.setText("Error: " + e.getMessage());
-            connectedDeviceNames.remove(deviceName); // Remove on error
+            connectedDevices.remove(deviceName); // Remove on error
         }
     }
 
@@ -406,7 +402,7 @@ public class MainActivity extends AppCompatActivity {
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 try {
                     String name = (String) parent.getItemAtPosition(position);
-                    UsbDevice device = deviceMap.get(name);
+                    UsbDevice device = devices.get(name);
                     if (device != null) {
                         logAction("👆 User selected device: " + name);
                         selectedDevice = device;
@@ -428,13 +424,20 @@ public class MainActivity extends AppCompatActivity {
 
         binding.refreshVolumeButton.setOnClickListener(v -> {
             try {
-                if (deviceDescriptor >= 0) {
-                    addDebugLog("🔄 Refreshing volume display...");
-                    refreshVolumeDisplay(deviceDescriptor);
-                } else {
-                    addDebugLog("⚠ No device connected");
-                    tvCurrentVolume.setText("No device");
+                if (selectedDevice == null) {
+                    addDebugLog("⚠ No selected device");
+                    tvCurrentVolume.setText("No selected device");
                 }
+
+                UsbDeviceConnection connection = connectedDevices.get(selectedDevice.getDeviceName());
+                if (connection == null) {
+                    addDebugLog("⚠ No connection");
+                    tvCurrentVolume.setText("No connection");
+                }
+
+                addDebugLog("🔄 Refreshing volume display...");
+                refreshVolumeDisplay(connection);
+
             } catch (Exception e) {
                 logError("❌ Error refreshing volume: " + e.getMessage(), e);
             }
@@ -444,10 +447,8 @@ public class MainActivity extends AppCompatActivity {
         binding.toggleDebugBtn.setOnClickListener(v -> toggleDebugViewVisibility());
 
         // Checkbox listeners (registered after setChecked to avoid firing on init)
-        autoApply.setOnClickListener(v ->
-                onCheckboxChanged(autoApply, "autoApply", "Auto-apply"));
-        quitAfterApply.setOnClickListener(v ->
-                onCheckboxChanged(quitAfterApply, "quitAfterApply", "Quit-after-apply"));
+        autoApply.setOnClickListener(v -> onCheckboxChanged(autoApply, "autoApply", "Auto-apply"));
+        quitAfterApply.setOnClickListener(v -> onCheckboxChanged(quitAfterApply, "quitAfterApply", "Quit-after-apply"));
 
         // Apply button listener
         binding.mountBtn.setOnClickListener(v -> applyButtonPressed());
@@ -512,7 +513,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // Connect button
-        if (connectedDeviceNames.contains(selectedDevice.getDeviceName())) {
+        if (connectedDevices.containsKey(selectedDevice.getDeviceName())) {
             connectBtn.setText("Device Connected");
             connectBtn.setEnabled(false);
         } else if (usbManager.hasPermission(selectedDevice)) {
@@ -545,7 +546,8 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == RECORD_AUDIO_PERMISSION_CODE) {
-            if (grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (grantResults.length > 0
+                    && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 logAction("✓ RECORD_AUDIO permission granted");
             } else {
                 logAction("✗ RECORD_AUDIO permission denied");
@@ -556,16 +558,23 @@ public class MainActivity extends AppCompatActivity {
     private void applyButtonPressed() {
         String volume = volInput.getText().toString();
 
-        if (deviceDescriptor < 0) {
+        if (selectedDevice == null) {
             addDebugLog("❌ No device selected");
+            tvDeviceName.setText("No device selected");
             tvDeviceName.setBackgroundColor(Color.RED);
-            Toast.makeText(this, "No device selected", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        UsbDeviceConnection connection = connectedDevices.get(selectedDevice.getDeviceName());
+        if (connection == null) {
+            addDebugLog("⚠ No connection");
+            tvDeviceName.setText("No connection");
             return;
         }
 
         try {
             addDebugLog("→ Setting volume to: 0x" + volume);
-            setDeviceVolume(deviceDescriptor);
+            setDeviceVolume(connection);
             addDebugLog("✓ Volume set successfully");
             clearErrorState();
             savePref("volume", volume);
@@ -598,24 +607,84 @@ public class MainActivity extends AppCompatActivity {
         return data;
     }
 
-    /**
-     * A native method that is implemented by the 'lib' native library,
-     * which is packaged with this application.
-     */
-    public native String initializeNativeDevice(int fileDescriptor);
+    public byte[] getDeviceVolume(UsbDeviceConnection usbConnection) {
+        if (usbConnection == null) {
+            addDebugLog("⚠ usbConnection missing or fd mismatch");
+            return null;
+        }
 
-    public native byte[] getDeviceVolume(int fileDescriptor);
+        try {
+            byte[] left = new byte[2];
+            byte[] right = new byte[2];
+            int ret;
 
-    public native void setDeviceVolume(int fileDescriptor, byte[] volume);
+            // Read left
+            ret = usbConnection.controlTransfer(0b10100001, 0x01, 0x0201, 0x0200, left, left.length, 500);
+            if (ret < 0) {
+                addDebugLog("⚠ controlTransfer read left error ret=" + ret);
+            } else if (ret != left.length) {
+                addDebugLog("⚠ controlTransfer read left unexpected len=" + ret);
+            }
 
-    public void setDeviceVolume(int fileDescriptor) {
+            // Read right
+            ret = usbConnection.controlTransfer(0b10100001, 0x01, 0x0202, 0x0200, right, right.length, 500);
+            if (ret < 0) {
+                addDebugLog("⚠ controlTransfer read right error ret=" + ret);
+            } else if (ret != right.length) {
+                addDebugLog("⚠ controlTransfer read right unexpected len=" + ret);
+            }
+
+            byte[] out = new byte[4];
+            out[0] = left[0];
+            out[1] = left[1];
+            out[2] = right[0];
+            out[3] = right[1];
+            return out;
+        } catch (Exception e) {
+            logError("❌ getDeviceVolumeJava exception: " + e.getMessage(), e);
+            return null;
+        }
+    }
+
+    public void setDeviceVolume(UsbDeviceConnection usbConnection, byte[] volume) {
+        if (usbConnection == null) {
+            addDebugLog("⚠ usbConnection missing or fd mismatch on set");
+            return;
+        }
+        if (volume == null || volume.length < 2) {
+            throw new IllegalArgumentException("Volume bytes must be length >= 2");
+        }
+        try {
+            byte[] two = new byte[2];
+            two[0] = volume[0];
+            two[1] = volume[1];
+
+            int ret = usbConnection.controlTransfer(0x21, 0x01, 0x0201, 0x0200, two, two.length, 500);
+            if (ret < 0) {
+                addDebugLog("⚠ controlTransfer write left error ret=" + ret);
+            } else if (ret != two.length) {
+                addDebugLog("⚠ controlTransfer write left partial ret=" + ret);
+            }
+
+            ret = usbConnection.controlTransfer(0x21, 0x01, 0x0202, 0x0200, two, two.length, 500);
+            if (ret < 0) {
+                addDebugLog("⚠ controlTransfer write right error ret=" + ret);
+            } else if (ret != two.length) {
+                addDebugLog("⚠ controlTransfer write right partial ret=" + ret);
+            }
+        } catch (Exception e) {
+            logError("❌ setDeviceVolumeJava exception: " + e.getMessage(), e);
+        }
+    }
+
+    public void setDeviceVolume(UsbDeviceConnection connection) {
         String volume = volInput.getText().toString();
 
         if (!volume.matches("[0-9A-Fa-f]{4}")) {
             throw new IllegalArgumentException("Volume must be 4 hex characters");
         }
 
-        setDeviceVolume(fileDescriptor, hexStringToByteArray(volume));
+        setDeviceVolume(connection, hexStringToByteArray(volume));
         Toast.makeText(getApplicationContext(), "Volume set for DAC!", Toast.LENGTH_LONG).show();
     }
 }
