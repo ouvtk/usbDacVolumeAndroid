@@ -249,7 +249,6 @@ public class MainActivity extends AppCompatActivity {
             boolean listChanged = false;
 
             HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
-
             for (UsbDevice device : deviceList.values()) {
                 String displayName = getDeviceDisplayName(device);
                 newDeviceMap.put(displayName, device);
@@ -334,17 +333,14 @@ public class MainActivity extends AppCompatActivity {
 
             // Find the audio interface
             UsbInterface audioInterface = getAudioInterface(device);
-            if (audioInterface != null) {
-                addDebugLog("✓ Found audio interface");
-            }
-
             if (audioInterface == null) {
                 addDebugLog("❌ Not an audio device");
                 tvDeviceName.setText("Not an audio device");
                 connectedDeviceNames.remove(deviceName);
                 return;
             }
-
+            
+            addDebugLog("✓ Found audio interface");
             UsbDeviceConnection connection = usbManager.openDevice(device);
             if (connection == null) {
                 addDebugLog("❌ Failed to open device connection");
