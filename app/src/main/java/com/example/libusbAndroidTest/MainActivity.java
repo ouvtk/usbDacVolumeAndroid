@@ -17,6 +17,7 @@ import android.util.Log;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ScrollView;
@@ -55,8 +56,11 @@ public class MainActivity extends AppCompatActivity {
 
     private CheckBox autoApply;
     private CheckBox quitAfterApply;
+    private Button permissionBtn;
+    private Button connectBtn;
 
     private int deviceDescriptor = -1;
+    private UsbDevice selectedDevice;
 
     // Store device mapping: display name -> UsbDevice
     private HashMap<String, UsbDevice> deviceMap = new HashMap<>();
@@ -93,17 +97,7 @@ public class MainActivity extends AppCompatActivity {
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                         if (device != null) {
                             logAction("✓ Permission granted for device: " + device.getDeviceName());
-                            if (isDebounceExpired()) {
-                                refreshDeviceList();
-                            }
-                            // Connect now that permission is granted
-                            runOnUiThread(() -> {
-                                try {
-                                    connectDevice(device);
-                                } catch (Exception e) {
-                                    logError("❌ Error connecting after permission: " + e.getMessage(), e);
-                                }
-                            });
+                            runOnUiThread(() -> updateButtonStates());
                         }
                     } else {
                         logAction("✗ Permission denied for device " + device);
@@ -124,9 +118,15 @@ public class MainActivity extends AppCompatActivity {
                 if (device != null) {
                     addDebugLog("🔌 USB device detached: " + device.getDeviceName());
                     connectedDeviceNames.remove(device.getDeviceName());
+                    if (selectedDevice != null &&
+                            selectedDevice.getDeviceName().equals(device.getDeviceName())) {
+                        selectedDevice = null;
+                        deviceDescriptor = -1;
+                    }
                     if (isDebounceExpired()) {
                         refreshDeviceList();
                     }
+                    runOnUiThread(() -> updateButtonStates());
                 }
             }
         }
@@ -258,10 +258,6 @@ public class MainActivity extends AppCompatActivity {
                 if (!deviceMap.containsKey(displayName)) {
                     listChanged = true;
                 }
-
-                if (!usbManager.hasPermission(device)) {
-                    requestDevicePermission(device);
-                }
             }
 
             // Check if any devices were removed
@@ -391,6 +387,8 @@ public class MainActivity extends AppCompatActivity {
         deviceSpinner = binding.deviceSpinner;
         autoApply = binding.autoApply;
         quitAfterApply = binding.quitAfterApply;
+        permissionBtn = binding.permissionBtn;
+        connectBtn = binding.connectBtn;
         debugLogView = binding.debugLog;
         debugScrollView = binding.debugScroll;
 
@@ -402,24 +400,20 @@ public class MainActivity extends AppCompatActivity {
         autoApply.setChecked(settings.getBoolean("autoApply", false));
         quitAfterApply.setChecked(settings.getBoolean("quitAfterApply", false));
 
-        // Setup device spinner listener
+        // Setup device spinner listener - only tracks selection, no auto-connect
         deviceSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 try {
-                    String selectedDeviceName = (String) parent.getItemAtPosition(position);
-                    UsbDevice selectedDevice = deviceMap.get(selectedDeviceName);
-                    if (selectedDevice != null) {
-                        logAction("👆 User selected device: " + selectedDeviceName);
-
-                        // If we already have permission, connect immediately.
-                        if (usbManager.hasPermission(selectedDevice)) {
-                            connectDevice(selectedDevice);
-                        } else {
-                            // Request permission and wait for the ACTION_USB_PERMISSION broadcast.
-                            requestDevicePermission(selectedDevice);
-                        }
+                    String name = (String) parent.getItemAtPosition(position);
+                    UsbDevice device = deviceMap.get(name);
+                    if (device != null) {
+                        logAction("👆 User selected device: " + name);
+                        selectedDevice = device;
+                    } else {
+                        selectedDevice = null;
                     }
+                    updateButtonStates();
                 } catch (Exception e) {
                     logError("❌ Error selecting device: " + e.getMessage(), e);
                 }
@@ -427,7 +421,8 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onNothingSelected(AdapterView<?> parent) {
-                // Do nothing
+                selectedDevice = null;
+                updateButtonStates();
             }
         });
 
@@ -457,6 +452,21 @@ public class MainActivity extends AppCompatActivity {
         // Apply button listener
         binding.mountBtn.setOnClickListener(v -> applyButtonPressed());
 
+        // Permission button listener
+        permissionBtn.setOnClickListener(v -> {
+            if (selectedDevice != null) {
+                requestDevicePermission(selectedDevice);
+            }
+        });
+
+        // Connect button listener
+        connectBtn.setOnClickListener(v -> {
+            if (selectedDevice != null && usbManager.hasPermission(selectedDevice)) {
+                connectDevice(selectedDevice);
+                updateButtonStates();
+            }
+        });
+
         // Initialize UsbManager
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
 
@@ -479,11 +489,47 @@ public class MainActivity extends AppCompatActivity {
         binding.toggleDebugBtn.setText(debugVisible ? "Hide Debug" : "Debug");
     }
 
+    /**
+     * Updates the permission and connect button text/enabled state
+     * based on the currently selected device.
+     */
+    private void updateButtonStates() {
+        if (selectedDevice == null) {
+            permissionBtn.setText("Request Permission");
+            permissionBtn.setEnabled(false);
+            connectBtn.setText("Connect Device");
+            connectBtn.setEnabled(false);
+            return;
+        }
+
+        // Permission button
+        if (usbManager.hasPermission(selectedDevice)) {
+            permissionBtn.setText("Permission Granted");
+            permissionBtn.setEnabled(false);
+        } else {
+            permissionBtn.setText("Request Permission");
+            permissionBtn.setEnabled(true);
+        }
+
+        // Connect button
+        if (connectedDeviceNames.contains(selectedDevice.getDeviceName())) {
+            connectBtn.setText("Device Connected");
+            connectBtn.setEnabled(false);
+        } else if (usbManager.hasPermission(selectedDevice)) {
+            connectBtn.setText("Connect Device");
+            connectBtn.setEnabled(true);
+        } else {
+            connectBtn.setText("Connect Device");
+            connectBtn.setEnabled(false);
+        }
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         // Refresh device list when resuming to catch any changes
         refreshDeviceList();
+        updateButtonStates();
     }
 
     private void requestRecordAudioPermission() {
