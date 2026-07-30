@@ -1,5 +1,6 @@
 package com.example.libusbAndroidTest;
 
+
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -7,6 +8,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbEndpoint;
@@ -30,6 +32,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.example.libusbAndroidTest.databinding.ActivityMainBinding;
+import com.example.libusbAndroidTest.UsbDescriptorParser.*;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -79,6 +82,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String ACTION_USB_PERMISSION = "com.android.example.USB_PERMISSION";
     private static final int RECORD_AUDIO_PERMISSION_CODE = 1;
     private static final String PREFS_KEY = "myPrefs";
+    private static final int USB_RECIP_DEVICE = 0x00;
 
     // Debug logging
     private TextView debugLogView;
@@ -118,6 +122,7 @@ public class MainActivity extends AppCompatActivity {
                     String deviceName = device.getDeviceName();
                     addDebugLog("🔌 USB device detached: " + deviceName);
                     UsbDeviceConnection connection = connectedDevices.remove(deviceName);
+                    connection.close();
 
                     connectedDevices.remove(deviceName);
                     if (selectedDevice != null &&
@@ -214,11 +219,16 @@ public class MainActivity extends AppCompatActivity {
 
     // @Nullable
     private UsbInterface getAudioInterface(UsbDevice device) {
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            UsbInterface intf = device.getInterface(i);
+            addDebugLog(intf.toString());
+        }
+
         // Audio device class = 0x01, Audio subclass = 0x02
         for (int i = 0; i < device.getInterfaceCount(); i++) {
             UsbInterface intf = device.getInterface(i);
-            if (intf.getInterfaceClass() == 0x01 &&
-                    intf.getInterfaceSubclass() == 0x02) {
+            if (intf.getInterfaceClass() == UsbConstants.USB_CLASS_AUDIO &&
+                    intf.getInterfaceSubclass() == 0x01) {
                 return intf;
             }
         }
@@ -298,16 +308,18 @@ public class MainActivity extends AppCompatActivity {
             try {
                 byte[] vol = getDeviceVolume(connection);
                 final String text;
-                if (vol == null || vol.length < 4) {
+                if (vol == null || vol.length < 6) {
                     text = "Volume: unknown";
                     addDebugLog("⚠ Volume read returned null or invalid length");
                 } else {
-                    int left = ((vol[1] & 0xFF) << 8) | (vol[0] & 0xFF);
-                    int right = ((vol[3] & 0xFF) << 8) | (vol[2] & 0xFF);
+                    int master = ((vol[1] & 0xFF) << 8) | (vol[0] & 0xFF);
+                    int left = ((vol[3] & 0xFF) << 8) | (vol[2] & 0xFF);
+                    int right = ((vol[4] & 0xFF) << 8) | (vol[5] & 0xFF);
+                    String masterHex = String.format("%04X", master & 0xFFFF);
                     String leftHex = String.format("%04X", left & 0xFFFF);
                     String rightHex = String.format("%04X", right & 0xFFFF);
-                    text = "Left: 0x" + leftHex + " (" + left + ")  Right: 0x" + rightHex + " (" + right + ")";
-                    addDebugLog("📊 Volume read: L=0x" + leftHex + " R=0x" + rightHex);
+                    text = "Master: 0x" + masterHex + " (" + master + ") Left: 0x" + leftHex + " (" + left + ")  Right: 0x" + rightHex + " (" + right + ")";
+                    addDebugLog("📊 Volume read: M=0x " + masterHex + " L=0x" + leftHex + " R=0x" + rightHex);
                 }
                 runOnUiThread(() -> tvCurrentVolume.setText(text));
             } catch (Exception e) {
@@ -331,7 +343,6 @@ public class MainActivity extends AppCompatActivity {
             if (audioInterface == null) {
                 addDebugLog("❌ Not an audio device");
                 tvDeviceName.setText("Not an audio device");
-                connectedDevices.remove(deviceName);
                 return;
             }
 
@@ -367,6 +378,15 @@ public class MainActivity extends AppCompatActivity {
             logError("❌ Error connecting device: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
             tvDeviceName.setText("Error: " + e.getMessage());
             connectedDevices.remove(deviceName); // Remove on error
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+
+        for (UsbDeviceConnection connection : connectedDevices.values()) {
+            connection.close();
         }
     }
 
@@ -427,12 +447,14 @@ public class MainActivity extends AppCompatActivity {
                 if (selectedDevice == null) {
                     addDebugLog("⚠ No selected device");
                     tvCurrentVolume.setText("No selected device");
+                    return;
                 }
 
                 UsbDeviceConnection connection = connectedDevices.get(selectedDevice.getDeviceName());
                 if (connection == null) {
                     addDebugLog("⚠ No connection");
                     tvCurrentVolume.setText("No connection");
+                    return;
                 }
 
                 addDebugLog("🔄 Refreshing volume display...");
@@ -614,31 +636,62 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
+            // TODO: Can use funit.controlSize here.
+            byte[] master = new byte[2];
             byte[] left = new byte[2];
             byte[] right = new byte[2];
-            int ret;
-
-            // Read left
-            ret = usbConnection.controlTransfer(0b10100001, 0x01, 0x0201, 0x0200, left, left.length, 500);
-            if (ret < 0) {
-                addDebugLog("⚠ controlTransfer read left error ret=" + ret);
-            } else if (ret != left.length) {
-                addDebugLog("⚠ controlTransfer read left unexpected len=" + ret);
+            List<FeatureUnitInfo> funits = UsbDescriptorParser.dumpAudioFeatureUnits(usbConnection);
+            if (funits == null || funits.size() <= 0) {
+                addDebugLog("⚠ No feature units returned");
+                return null;
+            }
+            
+            if (funits.size() > 1) {
+                for (FeatureUnitInfo f : funits) {
+                    addDebugLog(f.toString());
+                }    
             }
 
-            // Read right
-            ret = usbConnection.controlTransfer(0b10100001, 0x01, 0x0202, 0x0200, right, right.length, 500);
-            if (ret < 0) {
-                addDebugLog("⚠ controlTransfer read right error ret=" + ret);
-            } else if (ret != right.length) {
-                addDebugLog("⚠ controlTransfer read right unexpected len=" + ret);
+            FeatureUnitInfo funit = funits.get(0);
+            int requestType = UsbConstants.USB_DIR_IN | UsbConstants.USB_TYPE_CLASS | USB_RECIP_DEVICE;
+            int request = 0x81; // GET_CUR
+            int controlSelector = 0x02; // VOLUME control (Feature Unit)
+            int wIndex = (funit.unitId << 8) | funit.interfaceNumber;
+            
+            int channel = 0;
+            int value = (controlSelector << 8) | channel;
+            int len = usbConnection.controlTransfer(requestType, request, value, wIndex, master, master.length, 1000);
+            if (len < 0) {
+                addDebugLog("⚠ controlTransfer read master error ret=" + len);
+            } else if (len != left.length) {
+                addDebugLog("⚠ controlTransfer read master unexpected len=" + len);
             }
 
-            byte[] out = new byte[4];
-            out[0] = left[0];
-            out[1] = left[1];
-            out[2] = right[0];
-            out[3] = right[1];
+            channel = 1;
+            value = (controlSelector << 8) | channel;
+            len = usbConnection.controlTransfer(requestType, request, value, wIndex, left, left.length, 1000);
+            if (len < 0) {
+                addDebugLog("⚠ controlTransfer read left error ret=" + len);
+            } else if (len != left.length) {
+                addDebugLog("⚠ controlTransfer read left unexpected len=" + len);
+            }
+
+            channel = 2;
+            value = (controlSelector << 8) | channel;
+            len = usbConnection.controlTransfer(requestType, request, value, wIndex, right, right.length, 1000);
+            if (len < 0) {
+                addDebugLog("⚠ controlTransfer read right error ret=" + len);
+            } else if (len != left.length) {
+                addDebugLog("⚠ controlTransfer read right unexpected len=" + len);
+            }
+
+            byte[] out = new byte[6];
+            out[0] = master[0];
+            out[1] = master[1];
+            out[2] = left[0];
+            out[3] = left[1];
+            out[4] = right[0];
+            out[5] = right[1];
             return out;
         } catch (Exception e) {
             logError("❌ getDeviceVolumeJava exception: " + e.getMessage(), e);
@@ -659,14 +712,14 @@ public class MainActivity extends AppCompatActivity {
             two[0] = volume[0];
             two[1] = volume[1];
 
-            int ret = usbConnection.controlTransfer(0x21, 0x01, 0x0201, 0x0200, two, two.length, 500);
+            int ret = usbConnection.controlTransfer(0b00100001, 0x01, 0x0201, 0x0200, two, two.length, 500);
             if (ret < 0) {
                 addDebugLog("⚠ controlTransfer write left error ret=" + ret);
             } else if (ret != two.length) {
                 addDebugLog("⚠ controlTransfer write left partial ret=" + ret);
             }
 
-            ret = usbConnection.controlTransfer(0x21, 0x01, 0x0202, 0x0200, two, two.length, 500);
+            ret = usbConnection.controlTransfer(0b00100001, 0x01, 0x0202, 0x0200, two, two.length, 500);
             if (ret < 0) {
                 addDebugLog("⚠ controlTransfer write right error ret=" + ret);
             } else if (ret != two.length) {
