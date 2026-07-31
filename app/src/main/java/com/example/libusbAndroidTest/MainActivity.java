@@ -56,6 +56,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvDeviceName;
     private EditText volInput;
     private Spinner deviceSpinner;
+    private Spinner interfaceSpinner;
 
     private CheckBox autoApply;
     private CheckBox quitAfterApply;
@@ -63,10 +64,15 @@ public class MainActivity extends AppCompatActivity {
     private Button connectBtn;
 
     private UsbDevice selectedDevice;
+    private UsbInterface selectedInterface;
 
     // Store device mapping: display name -> UsbDevice
     private HashMap<String, UsbDevice> devices = new HashMap<>();
     private List<String> deviceDisplayNames = new ArrayList<>();
+
+    // Store interface mapping: display name -> UsbInterface
+    private HashMap<String, UsbInterface> interfaces = new HashMap<>();
+    private List<String> interfaceDisplayNames = new ArrayList<>();
 
     // Track connected devices to prevent duplicate connections
     private HashMap<String, UsbDeviceConnection> connectedDevices = new HashMap<>();
@@ -128,6 +134,8 @@ public class MainActivity extends AppCompatActivity {
                     if (selectedDevice != null &&
                             selectedDevice.getDeviceName().equals(deviceName)) {
                         selectedDevice = null;
+                        selectedInterface = null;
+                        updateInterfaceList(null);
                     }
                     if (isDebounceExpired()) {
                         refreshDeviceList();
@@ -221,14 +229,7 @@ public class MainActivity extends AppCompatActivity {
     private UsbInterface getAudioInterface(UsbDevice device) {
         for (int i = 0; i < device.getInterfaceCount(); i++) {
             UsbInterface intf = device.getInterface(i);
-            addDebugLog(intf.toString());
-        }
-
-        // Audio device class = 0x01, Audio subclass = 0x02
-        for (int i = 0; i < device.getInterfaceCount(); i++) {
-            UsbInterface intf = device.getInterface(i);
-            if (intf.getInterfaceClass() == UsbConstants.USB_CLASS_AUDIO &&
-                    intf.getInterfaceSubclass() == 0x01) {
+            if (intf.getInterfaceClass() == UsbConstants.USB_CLASS_AUDIO) {
                 return intf;
             }
         }
@@ -250,6 +251,68 @@ public class MainActivity extends AppCompatActivity {
 
         String type = getAudioInterface(device) != null ? "🔊 Audio" : "⚙️ Control";
         return type + " Vendor: " + vendorId + " Product: " + productId + " (" + device.getDeviceName() + ")";
+    }
+
+    private String getInterfaceDisplayName(UsbInterface intf) {
+        String name = intf.getName();
+        StringBuilder sb = new StringBuilder();
+        sb.append("Interface ").append(intf.getId());
+        if (name != null && !name.trim().isEmpty()) {
+            sb.append(": ").append(name);
+        }
+        sb.append(" (Class: ").append(intf.getInterfaceClass())
+          .append(", Subclass: ").append(intf.getInterfaceSubclass()).append(")");
+        return sb.toString();
+    }
+
+    private void updateInterfaceList(UsbDevice device) {
+        interfaces.clear();
+        interfaceDisplayNames.clear();
+
+        if (device != null) {
+            // Deduplicate interfaces based on mId (intf.getId())
+            HashMap<Integer, UsbInterface> dedupedMap = new HashMap<>();
+            for (int i = 0; i < device.getInterfaceCount(); i++) {
+                UsbInterface intf = device.getInterface(i);
+                int id = intf.getId();
+                if (!dedupedMap.containsKey(id)) {
+                    dedupedMap.put(id, intf);
+                } else {
+                    // If an interface with mId already exists, prefer one with a non-null/non-empty name
+                    UsbInterface existing = dedupedMap.get(id);
+                    if ((existing.getName() == null || existing.getName().trim().isEmpty())
+                            && (intf.getName() != null && !intf.getName().trim().isEmpty())) {
+                        dedupedMap.put(id, intf);
+                    }
+                }
+            }
+
+            List<Integer> ids = new ArrayList<>(dedupedMap.keySet());
+            java.util.Collections.sort(ids);
+
+            for (int id : ids) {
+                UsbInterface intf = dedupedMap.get(id);
+                String displayName = getInterfaceDisplayName(intf);
+                interfaces.put(displayName, intf);
+                interfaceDisplayNames.add(displayName);
+            }
+        }
+
+        runOnUiThread(() -> {
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(MainActivity.this,
+                    android.R.layout.simple_spinner_item, interfaceDisplayNames);
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            interfaceSpinner.setAdapter(adapter);
+
+            if (!interfaceDisplayNames.isEmpty()) {
+                interfaceSpinner.setSelection(0);
+                selectedInterface = interfaces.get(interfaceDisplayNames.get(0));
+                addDebugLog("📋 Found " + interfaceDisplayNames.size() + " distinct interface(s)");
+            } else {
+                selectedInterface = null;
+                addDebugLog("📋 No interfaces found");
+            }
+        });
     }
 
     private void refreshDeviceList() {
@@ -338,15 +401,15 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             addDebugLog("🔌 Connecting device: " + deviceName);
-            // Find the audio interface
-            UsbInterface audioInterface = getAudioInterface(device);
-            if (audioInterface == null) {
-                addDebugLog("❌ Not an audio device");
-                tvDeviceName.setText("Not an audio device");
+            // Use selected interface if available, otherwise find audio interface
+            UsbInterface targetInterface = selectedInterface != null ? selectedInterface : getAudioInterface(device);
+            if (targetInterface == null) {
+                addDebugLog("❌ No valid interface selected");
+                tvDeviceName.setText("No valid interface selected");
                 return;
             }
 
-            addDebugLog("✓ Found audio interface");
+            addDebugLog("✓ Using interface: " + getInterfaceDisplayName(targetInterface));
             UsbDeviceConnection connection = usbManager.openDevice(device);
             if (connection == null) {
                 addDebugLog("❌ Failed to open device connection");
@@ -357,7 +420,7 @@ public class MainActivity extends AppCompatActivity {
 
             connectedDevices.put(deviceName, connection);
             addDebugLog("✓ Device connection opened");
-            boolean isClaimed = connection.claimInterface(audioInterface, true);
+            boolean isClaimed = connection.claimInterface(targetInterface, true);
             addDebugLog("✓ Interface claimed: " + isClaimed);
 
             int fileDescriptor = connection.getFileDescriptor();
@@ -401,6 +464,7 @@ public class MainActivity extends AppCompatActivity {
         tvDeviceName = binding.deviceName;
         volInput = binding.volume;
         deviceSpinner = binding.deviceSpinner;
+        interfaceSpinner = binding.interfaceSpinner;
         autoApply = binding.autoApply;
         quitAfterApply = binding.quitAfterApply;
         permissionBtn = binding.permissionBtn;
@@ -426,8 +490,10 @@ public class MainActivity extends AppCompatActivity {
                     if (device != null) {
                         logAction("👆 User selected device: " + name);
                         selectedDevice = device;
+                        updateInterfaceList(selectedDevice);
                     } else {
                         selectedDevice = null;
+                        updateInterfaceList(null);
                     }
                     updateButtonStates();
                 } catch (Exception e) {
@@ -438,7 +504,32 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onNothingSelected(AdapterView<?> parent) {
                 selectedDevice = null;
+                updateInterfaceList(null);
                 updateButtonStates();
+            }
+        });
+
+        // Setup interface spinner listener - tracks selected interface
+        interfaceSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                try {
+                    String name = (String) parent.getItemAtPosition(position);
+                    UsbInterface intf = interfaces.get(name);
+                    if (intf != null) {
+                        logAction("👆 User selected interface: " + name);
+                        selectedInterface = intf;
+                    } else {
+                        selectedInterface = null;
+                    }
+                } catch (Exception e) {
+                    logError("❌ Error selecting interface: " + e.getMessage(), e);
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                selectedInterface = null;
             }
         });
 
