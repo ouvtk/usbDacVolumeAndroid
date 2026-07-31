@@ -89,6 +89,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int RECORD_AUDIO_PERMISSION_CODE = 1;
     private static final String PREFS_KEY = "myPrefs";
     private static final int USB_RECIP_DEVICE = 0x00;
+    private static final int USB_RECIP_INTERFACE = 0x01;
 
     // Debug logging
     private TextView debugLogView;
@@ -426,9 +427,6 @@ public class MainActivity extends AppCompatActivity {
             int fileDescriptor = connection.getFileDescriptor();
             addDebugLog("✓ File descriptor: " + fileDescriptor);
 
-            // deviceDescriptor = fileDescriptor;
-            // refreshVolumeDisplay(deviceDescriptor);
-
             if (autoApply.isChecked()) {
                 addDebugLog("→ Auto-apply enabled, setting volume...");
                 setDeviceVolume(connection);
@@ -722,58 +720,63 @@ public class MainActivity extends AppCompatActivity {
 
     public byte[] getDeviceVolume(UsbDeviceConnection usbConnection) {
         if (usbConnection == null) {
-            addDebugLog("⚠ usbConnection missing or fd mismatch");
+            addDebugLog("⚠ usbConnection missing or null");
             return null;
         }
 
         try {
-            // TODO: Can use funit.controlSize here.
             byte[] master = new byte[2];
             byte[] left = new byte[2];
             byte[] right = new byte[2];
             List<FeatureUnitInfo> funits = UsbDescriptorParser.dumpAudioFeatureUnits(usbConnection);
             if (funits == null || funits.size() <= 0) {
-                addDebugLog("⚠ No feature units returned");
+                addDebugLog("⚠ No feature units returned from descriptor parser");
                 return null;
             }
             
-            if (funits.size() > 1) {
-                for (FeatureUnitInfo f : funits) {
-                    addDebugLog(f.toString());
-                }    
-            }
-
             FeatureUnitInfo funit = funits.get(0);
-            int requestType = UsbConstants.USB_DIR_IN | UsbConstants.USB_TYPE_CLASS | USB_RECIP_DEVICE;
-            int request = 0x81; // GET_CUR
-            int controlSelector = 0x02; // VOLUME control (Feature Unit)
+            addDebugLog("🔍 Feature Unit info: " + funit.toString());
+
+            // Target recipient scope MUST be USB_RECIP_INTERFACE (0x01), not USB_RECIP_DEVICE (0x00)
+            int requestType = UsbConstants.USB_DIR_IN | UsbConstants.USB_TYPE_CLASS | USB_RECIP_INTERFACE; // 0xA1
+            int request = 0x81; // UAC1 GET_CUR
+            int controlSelector = 0x02; // VOLUME control
             int wIndex = (funit.unitId << 8) | funit.interfaceNumber;
             
-            int channel = 0;
-            int value = (controlSelector << 8) | channel;
+            // Try Channel 0 (Master)
+            int value = (controlSelector << 8) | 0;
+            addDebugLog(String.format(Locale.US, "→ Read Master: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X", requestType, request, value, wIndex));
             int len = usbConnection.controlTransfer(requestType, request, value, wIndex, master, master.length, 1000);
+            
+            // Fallback for UAC2 if UAC1 (0x81) returned error (-1)
             if (len < 0) {
-                addDebugLog("⚠ controlTransfer read master error ret=" + len);
-            } else if (len != left.length) {
-                addDebugLog("⚠ controlTransfer read master unexpected len=" + len);
+                addDebugLog("⚠ UAC1 GET_CUR (0x81) failed ret=" + len + ", trying UAC2 CUR (0x01)...");
+                request = 0x01; // UAC2 CUR request
+                len = usbConnection.controlTransfer(requestType, request, value, wIndex, master, master.length, 1000);
             }
 
-            channel = 1;
-            value = (controlSelector << 8) | channel;
+            if (len < 0) {
+                addDebugLog("⚠ controlTransfer read master error ret=" + len);
+            } else {
+                addDebugLog("✓ controlTransfer read master success ret=" + len + " bytes: " + String.format("%02X %02X", master[0], master[1]));
+            }
+
+            // Channel 1 (Left)
+            value = (controlSelector << 8) | 1;
             len = usbConnection.controlTransfer(requestType, request, value, wIndex, left, left.length, 1000);
             if (len < 0) {
                 addDebugLog("⚠ controlTransfer read left error ret=" + len);
-            } else if (len != left.length) {
-                addDebugLog("⚠ controlTransfer read left unexpected len=" + len);
+            } else {
+                addDebugLog("✓ controlTransfer read left success ret=" + len);
             }
 
-            channel = 2;
-            value = (controlSelector << 8) | channel;
+            // Channel 2 (Right)
+            value = (controlSelector << 8) | 2;
             len = usbConnection.controlTransfer(requestType, request, value, wIndex, right, right.length, 1000);
             if (len < 0) {
                 addDebugLog("⚠ controlTransfer read right error ret=" + len);
-            } else if (len != left.length) {
-                addDebugLog("⚠ controlTransfer read right unexpected len=" + len);
+            } else {
+                addDebugLog("✓ controlTransfer read right success ret=" + len);
             }
 
             byte[] out = new byte[6];
@@ -785,14 +788,14 @@ public class MainActivity extends AppCompatActivity {
             out[5] = right[1];
             return out;
         } catch (Exception e) {
-            logError("❌ getDeviceVolumeJava exception: " + e.getMessage(), e);
+            logError("❌ getDeviceVolume exception: " + e.getMessage(), e);
             return null;
         }
     }
 
     public void setDeviceVolume(UsbDeviceConnection usbConnection, byte[] volume) {
         if (usbConnection == null) {
-            addDebugLog("⚠ usbConnection missing or fd mismatch on set");
+            addDebugLog("⚠ usbConnection missing or null on set");
             return;
         }
         if (volume == null || volume.length < 2) {
@@ -803,21 +806,44 @@ public class MainActivity extends AppCompatActivity {
             two[0] = volume[0];
             two[1] = volume[1];
 
-            int ret = usbConnection.controlTransfer(0b00100001, 0x01, 0x0201, 0x0200, two, two.length, 500);
-            if (ret < 0) {
-                addDebugLog("⚠ controlTransfer write left error ret=" + ret);
-            } else if (ret != two.length) {
-                addDebugLog("⚠ controlTransfer write left partial ret=" + ret);
+            // Resolve Feature Unit and interface from descriptor parser
+            int unitId = 2; // default fallback
+            int ifaceNum = 0; // default fallback
+            List<FeatureUnitInfo> funits = UsbDescriptorParser.dumpAudioFeatureUnits(usbConnection);
+            if (funits != null && !funits.isEmpty()) {
+                FeatureUnitInfo funit = funits.get(0);
+                unitId = funit.unitId;
+                ifaceNum = funit.interfaceNumber;
+                addDebugLog("🔍 Parsed Feature Unit for Set Volume: Unit ID=" + unitId + ", Iface=" + ifaceNum);
+            } else {
+                addDebugLog("⚠ No feature units found, falling back to Unit ID=2, Iface=0");
             }
 
-            ret = usbConnection.controlTransfer(0b00100001, 0x01, 0x0202, 0x0200, two, two.length, 500);
+            int wIndex = (unitId << 8) | ifaceNum;
+            int requestType = UsbConstants.USB_DIR_OUT | UsbConstants.USB_TYPE_CLASS | USB_RECIP_INTERFACE; // 0x21
+            int request = 0x01; // SET_CUR (UAC1 and UAC2)
+
+            // Channel 1 (Left)
+            int valueLeft = (0x02 << 8) | 0x01; // VOLUME control, Channel 1
+            addDebugLog(String.format(Locale.US, "→ Transfer Set Left: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X", requestType, request, valueLeft, wIndex));
+            int ret = usbConnection.controlTransfer(requestType, request, valueLeft, wIndex, two, two.length, 1000);
+            if (ret < 0) {
+                addDebugLog("⚠ controlTransfer write left error ret=" + ret);
+            } else {
+                addDebugLog("✓ controlTransfer write left ret=" + ret);
+            }
+
+            // Channel 2 (Right)
+            int valueRight = (0x02 << 8) | 0x02; // VOLUME control, Channel 2
+            addDebugLog(String.format(Locale.US, "→ Transfer Set Right: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X", requestType, request, valueRight, wIndex));
+            ret = usbConnection.controlTransfer(requestType, request, valueRight, wIndex, two, two.length, 1000);
             if (ret < 0) {
                 addDebugLog("⚠ controlTransfer write right error ret=" + ret);
-            } else if (ret != two.length) {
-                addDebugLog("⚠ controlTransfer write right partial ret=" + ret);
+            } else {
+                addDebugLog("✓ controlTransfer write right ret=" + ret);
             }
         } catch (Exception e) {
-            logError("❌ setDeviceVolumeJava exception: " + e.getMessage(), e);
+            logError("❌ setDeviceVolume exception: " + e.getMessage(), e);
         }
     }
 
