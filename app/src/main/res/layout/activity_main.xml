@@ -13,18 +13,18 @@
         android:layout_height="wrap_content"
         android:text="Select Device:"
         android:textStyle="bold"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        android:layout_marginStart="16dp" />
+        android:layout_marginStart="8dp" />
 
     <Spinner
         android:id="@+id/device_spinner"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toBottomOf="@id/device_label" />
@@ -36,18 +36,18 @@
         android:layout_height="wrap_content"
         android:text="Select Interface:"
         android:textStyle="bold"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="6dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/device_spinner"
-        android:layout_marginStart="16dp" />
+        android:layout_marginStart="8dp" />
 
     <Spinner
         android:id="@+id/interface_spinner"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toBottomOf="@id/interface_label" />
@@ -59,7 +59,7 @@
         android:ems="10"
         android:hint="@string/volume_hex"
         android:inputType="text"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/interface_spinner" />
@@ -68,7 +68,7 @@
         android:id="@+id/auto_apply"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="4dp"
         android:text="@string/auto_apply_on_start"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0"
@@ -79,7 +79,7 @@
         android:id="@+id/quit_after_apply"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="4dp"
         android:text="@string/quit_app_after_applying_volume"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0"
@@ -90,7 +90,7 @@
         android:id="@+id/mount_btn"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:text="@string/apply"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -100,7 +100,7 @@
         android:id="@+id/permission_btn"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:text="@string/apply"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -110,21 +110,31 @@
         android:id="@+id/connect_btn"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:text="@string/apply"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/permission_btn" />
-        
+
+    <Button
+        android:id="@+id/release_btn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Release Interfaces"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/connect_btn" />
+
     <TextView
         android:id="@+id/device_name"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:text="@string/no_usb_device"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/connect_btn" />
+        app:layout_constraintTop_toBottomOf="@id/release_btn" />
 
     <TextView
         android:id="@+id/current_volume"
@@ -132,8 +142,8 @@
         android:layout_height="wrap_content"
         android:text="Volume: -"
         android:textSize="14sp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toBottomOf="@id/device_name" />
@@ -152,7 +162,7 @@
         android:id="@+id/debug_scroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="8dp"
         android:background="#f0f0f0"
         android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@id/refresh_volume_button"
@@ -166,7 +176,7 @@
             android:layout_height="wrap_content"
             android:text="Debug Log (tap to show/hide):\n"
             android:textSize="10sp"
-            android:padding="8dp"
+            android:padding="4dp"
             android:fontFamily="monospace"
             android:textColor="#000000"
             android:textIsSelectable="true"/>
@@ -181,7 +191,7 @@
         android:textSize="10sp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
-        android:layout_marginEnd="8dp"
-        android:layout_marginBottom="8dp" />
+        android:layout_marginEnd="4dp"
+        android:layout_marginBottom="4dp" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

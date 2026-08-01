@@ -61,6 +61,7 @@ public class MainActivity extends AppCompatActivity {
     private CheckBox quitAfterApply;
     private Button permissionBtn;
     private Button connectBtn;
+    private Button releaseBtn;
 
     private UsbDevice selectedDevice;
     private UsbInterface selectedInterface;
@@ -228,7 +229,6 @@ public class MainActivity extends AppCompatActivity {
     private boolean isAudioInterface(UsbInterface iface) {
         return iface.getInterfaceClass() == UsbConstants.USB_CLASS_AUDIO;
     }
-
 
     // @Nullable
     private UsbInterface getAudioInterface(UsbDevice device) {
@@ -442,12 +442,42 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    protected void releaseDevice(UsbDevice device) {
+        if (device == null) {
+            return;
+        }
+
+        String deviceName = device.getDeviceName();
+        UsbDeviceConnection connection = connectedDevices.remove(deviceName);
+        if (connection != null) {
+            addDebugLog("🔓 Releasing interfaces for: " + deviceName);
+            for (int i = 0; i < device.getInterfaceCount(); i++) {
+                UsbInterface iface = device.getInterface(i);
+                try {
+                    boolean released = connection.releaseInterface(iface);
+                    addDebugLog("✓ Released interface ID " + iface.getId() + ": " + released);
+                } catch (Exception e) {
+                    addDebugLog("⚠ Error releasing interface ID " + iface.getId() + ": " + e.getMessage());
+                }
+            }
+            connection.close();
+            addDebugLog("✓ Connection closed for device: " + deviceName);
+        } else {
+            addDebugLog("⚠ No active connection found to release");
+        }
+
+        runOnUiThread(() -> updateButtonStates());
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
 
-        for (UsbDeviceConnection connection : connectedDevices.values()) {
-            connection.close();
+        for (String deviceName : connectedDevices.keySet()) {
+            UsbDevice device = devices.get(deviceName);
+            if (device != null) {
+                releaseDevice(device);
+            }
         }
     }
 
@@ -467,6 +497,7 @@ public class MainActivity extends AppCompatActivity {
         quitAfterApply = binding.quitAfterApply;
         permissionBtn = binding.permissionBtn;
         connectBtn = binding.connectBtn;
+        releaseBtn = binding.releaseBtn;
         debugLogView = binding.debugLog;
         debugScrollView = binding.debugScroll;
 
@@ -579,6 +610,13 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // Release button listener
+        releaseBtn.setOnClickListener(v -> {
+            if (selectedDevice != null) {
+                releaseDevice(selectedDevice);
+            }
+        });
+
         // Initialize UsbManager
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
 
@@ -611,6 +649,7 @@ public class MainActivity extends AppCompatActivity {
             permissionBtn.setEnabled(false);
             connectBtn.setText("Connect Device");
             connectBtn.setEnabled(false);
+            releaseBtn.setEnabled(false);
             return;
         }
 
@@ -627,12 +666,15 @@ public class MainActivity extends AppCompatActivity {
         if (connectedDevices.containsKey(selectedDevice.getDeviceName())) {
             connectBtn.setText("Device Connected");
             connectBtn.setEnabled(false);
+            releaseBtn.setEnabled(true);
         } else if (usbManager.hasPermission(selectedDevice)) {
             connectBtn.setText("Connect Device");
             connectBtn.setEnabled(true);
+            releaseBtn.setEnabled(false);
         } else {
             connectBtn.setText("Connect Device");
             connectBtn.setEnabled(false);
+            releaseBtn.setEnabled(false);
         }
     }
 
