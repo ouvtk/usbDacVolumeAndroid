@@ -1,6 +1,5 @@
 package com.example.libusbAndroidTest;
 
-
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -262,7 +261,7 @@ public class MainActivity extends AppCompatActivity {
             sb.append(": ").append(name);
         }
         sb.append(" (Class: ").append(intf.getInterfaceClass())
-          .append(", Subclass: ").append(intf.getInterfaceSubclass()).append(")");
+                .append(", Subclass: ").append(intf.getInterfaceSubclass()).append(")");
         return sb.toString();
     }
 
@@ -279,7 +278,8 @@ public class MainActivity extends AppCompatActivity {
                 if (!dedupedMap.containsKey(id)) {
                     dedupedMap.put(id, intf);
                 } else {
-                    // If an interface with mId already exists, prefer one with a non-null/non-empty name
+                    // If an interface with mId already exists, prefer one with a non-null/non-empty
+                    // name
                     UsbInterface existing = dedupedMap.get(id);
                     if ((existing.getName() == null || existing.getName().trim().isEmpty())
                             && (intf.getName() != null && !intf.getName().trim().isEmpty())) {
@@ -382,7 +382,8 @@ public class MainActivity extends AppCompatActivity {
                     String masterHex = String.format("%04X", master & 0xFFFF);
                     String leftHex = String.format("%04X", left & 0xFFFF);
                     String rightHex = String.format("%04X", right & 0xFFFF);
-                    text = "Master: 0x" + masterHex + " (" + master + ") Left: 0x" + leftHex + " (" + left + ")  Right: 0x" + rightHex + " (" + right + ")";
+                    text = "Master: 0x" + masterHex + " (" + master + ") Left: 0x" + leftHex + " (" + left
+                            + ")  Right: 0x" + rightHex + " (" + right + ")";
                     addDebugLog("📊 Volume read: M=0x " + masterHex + " L=0x" + leftHex + " R=0x" + rightHex);
                 }
                 runOnUiThread(() -> tvCurrentVolume.setText(text));
@@ -414,19 +415,23 @@ public class MainActivity extends AppCompatActivity {
             UsbDeviceConnection connection = usbManager.openDevice(device);
             if (connection == null) {
                 addDebugLog("❌ Failed to open device connection");
-                Log.e(TAG, "Failed to open device connection");
                 tvDeviceName.setText("Failed to open device");
                 return;
             }
 
-            connectedDevices.put(deviceName, connection);
             addDebugLog("✓ Device connection opened");
-            boolean isClaimed = connection.claimInterface(targetInterface, true);
-            addDebugLog("✓ Interface claimed: " + isClaimed);
+            // Claim all Audio interfaces (Class 1) so control transfers to Audio Control
+            // interface succeed
+            for (int i = 0; i < device.getInterfaceCount(); i++) {
+                UsbInterface intf = device.getInterface(i);
+                if (intf.getId() != targetInterface.getId()
+                        && intf.getInterfaceClass() == UsbConstants.USB_CLASS_AUDIO) {
+                    boolean isClaimed = connection.claimInterface(intf, true);
+                    addDebugLog("✓ Audio interface (ID " + intf.getId() + ") claimed: " + isClaimed);
+                }
+            }
 
-            int fileDescriptor = connection.getFileDescriptor();
-            addDebugLog("✓ File descriptor: " + fileDescriptor);
-
+            connectedDevices.put(deviceName, connection);
             if (autoApply.isChecked()) {
                 addDebugLog("→ Auto-apply enabled, setting volume...");
                 setDeviceVolume(connection);
@@ -733,21 +738,23 @@ public class MainActivity extends AppCompatActivity {
                 addDebugLog("⚠ No feature units returned from descriptor parser");
                 return null;
             }
-            
+
             FeatureUnitInfo funit = funits.get(0);
             addDebugLog("🔍 Feature Unit info: " + funit.toString());
 
-            // Target recipient scope MUST be USB_RECIP_INTERFACE (0x01), not USB_RECIP_DEVICE (0x00)
+            // Target recipient scope MUST be USB_RECIP_INTERFACE (0x01), not
+            // USB_RECIP_DEVICE (0x00)
             int requestType = UsbConstants.USB_DIR_IN | UsbConstants.USB_TYPE_CLASS | USB_RECIP_INTERFACE; // 0xA1
             int request = 0x81; // UAC1 GET_CUR
             int controlSelector = 0x02; // VOLUME control
             int wIndex = (funit.unitId << 8) | funit.interfaceNumber;
-            
+
             // Try Channel 0 (Master)
             int value = (controlSelector << 8) | 0;
-            addDebugLog(String.format(Locale.US, "→ Read Master: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X", requestType, request, value, wIndex));
+            addDebugLog(String.format(Locale.US, "→ Read Master: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X",
+                    requestType, request, value, wIndex));
             int len = usbConnection.controlTransfer(requestType, request, value, wIndex, master, master.length, 1000);
-            
+
             // Fallback for UAC2 if UAC1 (0x81) returned error (-1)
             if (len < 0) {
                 addDebugLog("⚠ UAC1 GET_CUR (0x81) failed ret=" + len + ", trying UAC2 CUR (0x01)...");
@@ -758,7 +765,8 @@ public class MainActivity extends AppCompatActivity {
             if (len < 0) {
                 addDebugLog("⚠ controlTransfer read master error ret=" + len);
             } else {
-                addDebugLog("✓ controlTransfer read master success ret=" + len + " bytes: " + String.format("%02X %02X", master[0], master[1]));
+                addDebugLog("✓ controlTransfer read master success ret=" + len + " bytes: "
+                        + String.format("%02X %02X", master[0], master[1]));
             }
 
             // Channel 1 (Left)
@@ -823,24 +831,41 @@ public class MainActivity extends AppCompatActivity {
             int requestType = UsbConstants.USB_DIR_OUT | UsbConstants.USB_TYPE_CLASS | USB_RECIP_INTERFACE; // 0x21
             int request = 0x01; // SET_CUR (UAC1 and UAC2)
 
+            // Channel 0 (Master)
+            int valueMaster = (0x02 << 8) | 0x00; // VOLUME control, Master Channel
+            addDebugLog(
+                    String.format(Locale.US, "→ Transfer Set Master: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X",
+                            requestType, request, valueMaster, wIndex));
+            int retMaster = usbConnection.controlTransfer(requestType, request, valueMaster, wIndex, two, two.length,
+                    1000);
+            if (retMaster >= 0) {
+                addDebugLog("✓ controlTransfer write master ret=" + retMaster);
+            } else {
+                addDebugLog("⚠ controlTransfer write master error ret=" + retMaster);
+            }
+
             // Channel 1 (Left)
             int valueLeft = (0x02 << 8) | 0x01; // VOLUME control, Channel 1
-            addDebugLog(String.format(Locale.US, "→ Transfer Set Left: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X", requestType, request, valueLeft, wIndex));
-            int ret = usbConnection.controlTransfer(requestType, request, valueLeft, wIndex, two, two.length, 1000);
-            if (ret < 0) {
-                addDebugLog("⚠ controlTransfer write left error ret=" + ret);
+            addDebugLog(String.format(Locale.US, "→ Transfer Set Left: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X",
+                    requestType, request, valueLeft, wIndex));
+            int retLeft = usbConnection.controlTransfer(requestType, request, valueLeft, wIndex, two, two.length, 1000);
+            if (retLeft >= 0) {
+                addDebugLog("✓ controlTransfer write left ret=" + retLeft);
             } else {
-                addDebugLog("✓ controlTransfer write left ret=" + ret);
+                addDebugLog("⚠ controlTransfer write left error ret=" + retLeft);
             }
 
             // Channel 2 (Right)
             int valueRight = (0x02 << 8) | 0x02; // VOLUME control, Channel 2
-            addDebugLog(String.format(Locale.US, "→ Transfer Set Right: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X", requestType, request, valueRight, wIndex));
-            ret = usbConnection.controlTransfer(requestType, request, valueRight, wIndex, two, two.length, 1000);
-            if (ret < 0) {
-                addDebugLog("⚠ controlTransfer write right error ret=" + ret);
+            addDebugLog(
+                    String.format(Locale.US, "→ Transfer Set Right: reqType=0x%02X req=0x%02X val=0x%04X idx=0x%04X",
+                            requestType, request, valueRight, wIndex));
+            int retRight = usbConnection.controlTransfer(requestType, request, valueRight, wIndex, two, two.length,
+                    1000);
+            if (retRight >= 0) {
+                addDebugLog("✓ controlTransfer write right ret=" + retRight);
             } else {
-                addDebugLog("✓ controlTransfer write right ret=" + ret);
+                addDebugLog("⚠ controlTransfer write right error ret=" + retRight);
             }
         } catch (Exception e) {
             logError("❌ setDeviceVolume exception: " + e.getMessage(), e);
