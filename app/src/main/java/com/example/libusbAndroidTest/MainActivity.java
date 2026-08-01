@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -230,10 +231,34 @@ public class MainActivity extends AppCompatActivity {
         return iface.getInterfaceClass() == UsbConstants.USB_CLASS_AUDIO;
     }
 
+    private Iterable<UsbInterface> yieldInterfaces(UsbDevice device) {
+        int count = device.getInterfaceCount();
+        return new Iterable<UsbInterface>() {
+            @Override
+            public Iterator<UsbInterface> iterator() {
+                return new Iterator<UsbInterface>() {
+                    private int index = 0;
+
+                    @Override
+                    public boolean hasNext() {
+                        return device != null && index < count;
+                    }
+
+                    @Override
+                    public UsbInterface next() {
+                        if (!hasNext()) {
+                            throw new java.util.NoSuchElementException();
+                        }
+                        return device.getInterface(index++);
+                    }
+                };
+            }
+        };
+    }
+
     // @Nullable
     private UsbInterface getAudioInterface(UsbDevice device) {
-        for (int i = 0; i < device.getInterfaceCount(); i++) {
-            UsbInterface iface = device.getInterface(i);
+        for (UsbInterface iface : yieldInterfaces(device)) {
             if (isAudioInterface(iface)) {
                 return iface;
             }
@@ -277,8 +302,7 @@ public class MainActivity extends AppCompatActivity {
         if (device != null) {
             // Deduplicate interfaces based on mId
             HashMap<Integer, UsbInterface> dedupedMap = new HashMap<>();
-            for (int i = 0; i < device.getInterfaceCount(); i++) {
-                UsbInterface iface = device.getInterface(i);
+            for (UsbInterface iface : yieldInterfaces(device)) {
                 int id = iface.getId();
                 if (!dedupedMap.containsKey(id)) {
                     dedupedMap.put(id, iface);
@@ -417,9 +441,8 @@ public class MainActivity extends AppCompatActivity {
 
             addDebugLog("✓ Device connection opened");
             // Claim all Audio interfaces
-            for (int i = 0; i < device.getInterfaceCount(); i++) {
-                UsbInterface iface = device.getInterface(i);
-                addDebugLog("✓ Using interface: " + getInterfaceDisplayName(iface));
+            for (UsbInterface iface : yieldInterfaces(device)) {
+                addDebugLog("✓ Iterating interface: " + getInterfaceDisplayName(iface));
                 if (isAudioInterface(iface)) {
                     boolean isClaimed = connection.claimInterface(iface, true);
                     addDebugLog("✓ Audio interface (ID " + iface.getId() + ") claimed: " + isClaimed);
@@ -451,8 +474,7 @@ public class MainActivity extends AppCompatActivity {
         UsbDeviceConnection connection = connectedDevices.remove(deviceName);
         if (connection != null) {
             addDebugLog("🔓 Releasing interfaces for: " + deviceName);
-            for (int i = 0; i < device.getInterfaceCount(); i++) {
-                UsbInterface iface = device.getInterface(i);
+            for (UsbInterface iface : yieldInterfaces(device)) {
                 try {
                     boolean released = connection.releaseInterface(iface);
                     addDebugLog("✓ Released interface ID " + iface.getId() + ": " + released);
