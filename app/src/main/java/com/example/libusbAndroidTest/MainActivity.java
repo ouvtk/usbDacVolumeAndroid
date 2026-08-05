@@ -74,6 +74,7 @@ public class MainActivity extends AppCompatActivity {
     // Store interface mapping: display name -> UsbInterface
     private HashMap<String, UsbInterface> interfaces = new HashMap<>();
     private List<String> interfaceDisplayNames = new ArrayList<>();
+    private HashMap<UsbInterface, UsbDeviceConnection> claimedInterfaces = new HashMap<>();
 
     // Track connected devices to prevent duplicate connections
     private HashMap<String, UsbDeviceConnection> connectedDevices = new HashMap<>();
@@ -445,6 +446,9 @@ public class MainActivity extends AppCompatActivity {
                 addDebugLog("✓ Iterating interface: " + getInterfaceDisplayName(iface));
                 if (isAudioInterface(iface)) {
                     boolean isClaimed = connection.claimInterface(iface, true);
+                    if (isClaimed) {
+                        claimedInterfaces.put(iface, connection);
+                    }
                     addDebugLog("✓ Audio interface (ID " + iface.getId() + ") claimed: " + isClaimed);
                 }
             }
@@ -465,52 +469,23 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    protected void releaseConnectedDevices() {
-        List<String> deviceNames = new ArrayList<>(connectedDevices.keySet());
-        for (String deviceName : deviceNames) {
-            UsbDevice device = devices.get(deviceName);
-            if (device != null) {
-                releaseDevice(device);
+    protected void releaseClaimedInterfaces() {
+        for (UsbInterface iface : claimedInterfaces.keySet()) {
+            try {
+                UsbDeviceConnection connection = claimedInterfaces.get(iface);
+                boolean released = connection.releaseInterface(iface);
+                addDebugLog("✓ Interface released ID " + iface.getId() + ": " + released);
+            } catch (Exception e) {
+                addDebugLog("⚠ Error releasing interface ID " + iface.getId() + ": " + e.getMessage());
             }
         }
-    }
-
-    protected void releaseDevice(UsbDevice device) {
-        if (device == null) {
-            return;
-        }
-
-        String deviceName = device.getDeviceName();
-        UsbDeviceConnection connection = null; 
-        if (connectedDevices.containsKey(deviceName)) {
-            connection = connectedDevices.remove(deviceName);
-            addDebugLog("✓ Fetched connection for device: " + deviceName);
-        }
-        
-        if (connection != null) {
-            addDebugLog("🔓 Releasing interfaces for: " + deviceName);
-            for (UsbInterface iface : yieldInterfaces(device)) {
-                try {
-                    boolean released = connection.releaseInterface(iface);
-                    addDebugLog("✓ Released interface ID " + iface.getId() + ": " + released);
-                } catch (Exception e) {
-                    addDebugLog("⚠ Error releasing interface ID " + iface.getId() + ": " + e.getMessage());
-                }
-            }
-            connection.close();
-            addDebugLog("✓ Connection closed for device: " + deviceName);
-        } else {
-            addDebugLog("⚠ No active connection found to release");
-        }
-
-        runOnUiThread(() -> updateButtonStates());
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
 
-        releaseConnectedDevices();
+        releaseClaimedInterfaces();
     }
 
     @Override
@@ -644,7 +619,8 @@ public class MainActivity extends AppCompatActivity {
 
         // Release button listener
         releaseBtn.setOnClickListener(v -> {
-            releaseConnectedDevices();
+            releaseClaimedInterfaces();
+            runOnUiThread(() -> updateButtonStates());
         });
 
         // Initialize UsbManager
