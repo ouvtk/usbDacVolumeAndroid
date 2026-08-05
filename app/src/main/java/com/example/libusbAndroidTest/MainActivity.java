@@ -35,6 +35,7 @@ import com.example.libusbAndroidTest.UsbDescriptorParser.*;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -292,33 +293,33 @@ public class MainActivity extends AppCompatActivity {
         return sb.toString();
     }
 
+    private Collection<UsbInterface> dedupeInterfaces(Iterable<UsbInterface> ifaces) {
+        HashMap<Integer, UsbInterface> dedupedMap = new HashMap<>();
+        // Deduplicate interfaces based on mId
+        for (UsbInterface iface : ifaces) {
+            int id = iface.getId();
+            if (!dedupedMap.containsKey(id)) {
+                dedupedMap.put(id, iface);
+            } else {
+                // If an interface with mId already exists, prefer one with a non-null/non-empty
+                // name
+                UsbInterface existing = dedupedMap.get(id);
+                if ((existing.getName() == null || existing.getName().trim().isEmpty())
+                        && (iface.getName() != null && !iface.getName().trim().isEmpty())) {
+                    dedupedMap.put(id, iface);
+                }
+            }
+        }
+
+        return dedupedMap.values();
+    }
+
     private void updateInterfaceList(UsbDevice device) {
         interfaces.clear();
         interfaceDisplayNames.clear();
 
         if (device != null) {
-            // Deduplicate interfaces based on mId
-            HashMap<Integer, UsbInterface> dedupedMap = new HashMap<>();
-            for (UsbInterface iface : yieldInterfaces(device)) {
-                int id = iface.getId();
-                if (!dedupedMap.containsKey(id)) {
-                    dedupedMap.put(id, iface);
-                } else {
-                    // If an interface with mId already exists, prefer one with a non-null/non-empty
-                    // name
-                    UsbInterface existing = dedupedMap.get(id);
-                    if ((existing.getName() == null || existing.getName().trim().isEmpty())
-                            && (iface.getName() != null && !iface.getName().trim().isEmpty())) {
-                        dedupedMap.put(id, iface);
-                    }
-                }
-            }
-
-            List<Integer> ids = new ArrayList<>(dedupedMap.keySet());
-            java.util.Collections.sort(ids);
-
-            for (int id : ids) {
-                UsbInterface iface = dedupedMap.get(id);
+            for (UsbInterface iface : dedupeInterfaces(yieldInterfaces(device))) {
                 String displayName = getInterfaceDisplayName(iface);
                 interfaces.put(displayName, iface);
                 interfaceDisplayNames.add(displayName);
@@ -438,12 +439,14 @@ public class MainActivity extends AppCompatActivity {
 
             addDebugLog("✓ Device connection opened");
             // Claim all Audio interfaces
-            for (UsbInterface iface : yieldInterfaces(device)) {
+            for (UsbInterface iface : dedupeInterfaces(yieldInterfaces(device))) {
                 addDebugLog("✓ Iterating interface: " + getInterfaceDisplayName(iface));
                 if (isAudioInterface(iface)) {
                     boolean isClaimed = connection.claimInterface(iface, true);
                     if (isClaimed) {
                         claimedInterfaces.put(iface, connection);
+                        // Finish at first successfully claimed audio interface.
+                        break;
                     }
                     addDebugLog("✓ Audio interface (ID " + iface.getId() + ") claimed: " + isClaimed);
                 }
