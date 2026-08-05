@@ -465,13 +465,28 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    protected void releaseConnectedDevices() {
+        List<String> deviceNames = new ArrayList<>(connectedDevices.keySet());
+        for (String deviceName : deviceNames) {
+            UsbDevice device = devices.get(deviceName);
+            if (device != null) {
+                releaseDevice(device);
+            }
+        }
+    }
+
     protected void releaseDevice(UsbDevice device) {
         if (device == null) {
             return;
         }
 
         String deviceName = device.getDeviceName();
-        UsbDeviceConnection connection = connectedDevices.remove(deviceName);
+        UsbDeviceConnection connection = null; 
+        if (connectedDevices.containsKey(deviceName)) {
+            connection = connectedDevices.remove(deviceName);
+            addDebugLog("✓ Fetched connection for device: " + deviceName);
+        }
+        
         if (connection != null) {
             addDebugLog("🔓 Releasing interfaces for: " + deviceName);
             for (UsbInterface iface : yieldInterfaces(device)) {
@@ -495,12 +510,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
 
-        for (String deviceName : connectedDevices.keySet()) {
-            UsbDevice device = devices.get(deviceName);
-            if (device != null) {
-                releaseDevice(device);
-            }
-        }
+        releaseConnectedDevices();
     }
 
     @Override
@@ -634,9 +644,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Release button listener
         releaseBtn.setOnClickListener(v -> {
-            if (selectedDevice != null) {
-                releaseDevice(selectedDevice);
-            }
+            releaseConnectedDevices();
         });
 
         // Initialize UsbManager
