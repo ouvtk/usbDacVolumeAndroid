@@ -23,6 +23,13 @@ std::string connect_device(int fileDescriptor) {
     return get_device_name(device, devh);
 }
 
+void release_device(int fileDescriptor) {
+    libusb_device_handle *devh;
+    libusb_init(nullptr);
+    libusb_wrap_sys_device(nullptr, (intptr_t) fileDescriptor, &devh);
+    libusb_reset_device(devh);
+}
+
 // Helper: convert Java byte[] -> newly-allocated unsigned char[] (caller must delete[])
 unsigned char* as_unsigned_char_array(JNIEnv *env, jbyteArray array) {
     int len = env->GetArrayLength(array);
@@ -102,6 +109,14 @@ Java_com_example_libusbAndroidTest_MainActivity_initializeNativeDevice(
     return env->NewStringUTF(deviceName.c_str());
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_example_libusbAndroidTest_MainActivity_releaseNativeDevice(
+        JNIEnv *env,
+        jobject /* this */,
+        jint fileDescriptor) {
+
+    release_device(fileDescriptor);
+}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_libusbAndroidTest_MainActivity_setDeviceVolume(

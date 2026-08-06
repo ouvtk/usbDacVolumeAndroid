@@ -141,7 +141,6 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    connectedDevices.remove(deviceName);
                     if (selectedDevice != null &&
                             selectedDevice.getDeviceName().equals(deviceName)) {
                         selectedDevice = null;
@@ -501,7 +500,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
 
-        releaseClaimedInterfaces();
+        // releaseClaimedInterfaces();
     }
 
     @Override
@@ -635,7 +634,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Release button listener
         releaseBtn.setOnClickListener(v -> {
-            releaseClaimedInterfaces();
+            releaseSelectedDevice();
             runOnUiThread(() -> updateButtonStates());
         });
 
@@ -781,6 +780,23 @@ public class MainActivity extends AppCompatActivity {
         }
         return data;
     }
+
+    public void releaseSelectedDevice() {
+        if (selectedDevice == null) {
+            addDebugLog("⚠ Releasing, but no selected device");
+            return;
+        }
+
+        UsbDeviceConnection connection = connectedDevices.get(selectedDevice.getDeviceName());
+        if (connection == null) {
+            addDebugLog("⚠ Releasing, but no connection");
+            return;
+        }
+
+        releaseNativeDevice(connection.getFileDescriptor());
+    }
+
+    public native void releaseNativeDevice(int fileDescriptor);
 
     public byte[] getDeviceVolume(UsbDeviceConnection usbConnection) {
         if (usbConnection == null) {
