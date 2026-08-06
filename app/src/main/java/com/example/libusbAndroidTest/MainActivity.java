@@ -132,7 +132,14 @@ public class MainActivity extends AppCompatActivity {
                     String deviceName = device.getDeviceName();
                     addDebugLog("🔌 USB device detached: " + deviceName);
                     UsbDeviceConnection connection = connectedDevices.remove(deviceName);
-                    connection.close();
+                    if (connection != null) {
+                        try {
+                            connection.close();
+                            addDebugLog("✓ Connection closed for detached device: " + deviceName);
+                        } catch (Exception e) {
+                            addDebugLog("⚠ Error closing connection for detached device " + deviceName + ": " + e.getMessage());
+                        }
+                    }
 
                     connectedDevices.remove(deviceName);
                     if (selectedDevice != null &&
@@ -476,12 +483,18 @@ public class MainActivity extends AppCompatActivity {
         for (UsbInterface iface : claimedInterfaces.keySet()) {
             try {
                 UsbDeviceConnection connection = claimedInterfaces.get(iface);
+                if (connection == null) {
+                    addDebugLog("⚠ Connection is empty when releasing interface " + iface.getId());
+                    continue;
+                }
                 boolean released = connection.releaseInterface(iface);
                 addDebugLog("✓ Interface released ID " + iface.getId() + ": " + released);
             } catch (Exception e) {
                 addDebugLog("⚠ Error releasing interface ID " + iface.getId() + ": " + e.getMessage());
             }
         }
+
+        claimedInterfaces.clear();
     }
 
     @Override
