@@ -46,6 +46,10 @@ import java.util.Set;
 
 public class MainActivity extends AppCompatActivity {
 
+    static {
+        System.loadLibrary("libusbAndroidTest");
+    }
+
     private ActivityMainBinding binding;
     private UsbManager usbManager;
 
